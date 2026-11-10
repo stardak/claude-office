@@ -281,8 +281,9 @@ function BossSpriteComponent({
     <pixiContainer
       x={position.x}
       y={position.y}
-      onPointerTap={handlePointerTap}
-      interactive={clickToFocusEnabled}
+      onPointerDown={handlePointerTap}
+      eventMode={clickToFocusEnabled ? "static" : "passive"}
+      cursor={clickToFocusEnabled ? "pointer" : "default"}
     >
       {/* Chair - behind everything */}
       {chairTexture ? (

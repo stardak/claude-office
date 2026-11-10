@@ -47,7 +47,7 @@ from app.config import get_settings
 from app.core.broadcast_service import broadcast_state
 from app.core.event_processor import EventProcessor, get_event_processor
 from app.db.database import get_session_factory
-from app.db.models import OfficeWork
+from app.db.models import OfficeMessage, OfficeWork
 from app.models.common import BubbleContent, BubbleType
 from app.models.events import EventAdapter
 
@@ -59,6 +59,7 @@ _ID = r"[a-z][a-z0-9-]{0,23}"
 _ID_RE = re.compile(_ID)
 
 MAX_DETAIL = 20_000
+MAX_MESSAGE = 4_000
 KEEP_WORK = 20  # finished-work items kept per agent
 # Secrets never go in the office: "password: x", "api_key=...", bearer tokens,
 # common key formats (sk-..., cfast_..., ghp_..., AKIA...).
@@ -139,6 +140,7 @@ class OfficeStatus(BaseModel):
     needs_approval: bool = False
     handoff_to: str | None = Field(default=None, pattern=rf"^{_ID}$")
     detail: str | None = Field(default=None, max_length=MAX_DETAIL)
+    reply: str | None = Field(default=None, max_length=MAX_MESSAGE)
     link: str | None = Field(default=None, max_length=500, pattern=r"^https://\S+$")
 
     @field_validator("task")
@@ -149,11 +151,11 @@ class OfficeStatus(BaseModel):
             raise ValueError("task label rejected: looks like a secret")
         return v
 
-    @field_validator("detail")
+    @field_validator("detail", "reply")
     @classmethod
     def no_secrets(cls, v: str | None) -> str | None:
         if v and _SECRET_RE.search(v):
-            raise ValueError("detail rejected: looks like it contains a secret")
+            raise ValueError("rejected: looks like it contains a secret")
         return v
 
 
@@ -246,9 +248,13 @@ async def _apply(ep: EventProcessor, office: Office, body: OfficeStatus) -> dict
                 sm.agents[body.agent].current_task = body.task
         await broadcast_state(office.session_id, sm)
 
+    agent_key = "boss" if is_boss else body.agent
     # 3. Finished work (or an approval request) saved for the Work tab.
     if body.detail or body.link or body.needs_approval:
-        await _save_work(office, "boss" if is_boss else body.agent, task, body)
+        await _save_work(office, agent_key, task, body)
+    # 4. A chat reply to Stef.
+    if body.reply:
+        await _add_message(office.session_id, agent_key, "bot", body.reply)
 
     return {"status": "ok", "office": office.id, "session_id": office.session_id}
 
@@ -357,3 +363,106 @@ async def onset_status(
     office = _get_office("onset")
     _check_key(office.id, x_onset_key)
     return await _apply(ep, office, body)
+
+
+# --- Chat: Stef <-> one agent -------------------------------------------------
+
+
+def _msg_json(m: OfficeMessage) -> dict[str, Any]:
+    return {
+        "id": m.id,
+        "sender": m.sender,
+        "text": m.text,
+        "read": m.read_at is not None,
+        "createdAt": m.created_at.isoformat(),
+    }
+
+
+async def _add_message(session_id: str, agent_key: str, sender: str, text: str) -> OfficeMessage:
+    async with get_session_factory()() as db:
+        msg = OfficeMessage(session_id=session_id, agent_key=agent_key, sender=sender, text=text)
+        db.add(msg)
+        await db.commit()
+        await db.refresh(msg)
+        return msg
+
+
+def _chat_key(agent_key: str) -> str:
+    return "boss" if agent_key == "main" else agent_key
+
+
+class ChatIn(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_MESSAGE)
+
+    @field_validator("text")
+    @classmethod
+    def no_secrets(cls, v: str) -> str:
+        if _SECRET_RE.search(v):
+            raise ValueError("rejected: looks like it contains a secret")
+        return v.strip()
+
+
+@router.get("/office-chat/{session_id}/{agent_key}")
+async def chat_thread(session_id: str, agent_key: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Stef's chat with one agent, oldest first (the office popup)."""
+    async with get_session_factory()() as db:
+        rows = list(
+            (
+                await db.execute(
+                    select(OfficeMessage)
+                    .where(OfficeMessage.session_id == session_id)
+                    .where(OfficeMessage.agent_key == _chat_key(agent_key))
+                    .order_by(OfficeMessage.id.desc())
+                    .limit(max(1, min(limit, 200)))
+                )
+            ).scalars()
+        )
+        return [_msg_json(m) for m in reversed(rows)]
+
+
+@router.post("/office-chat/{session_id}/{agent_key}")
+async def chat_send(session_id: str, agent_key: str, body: ChatIn) -> dict[str, Any]:
+    """Stef sends a message/brief to one agent. It waits in the bot's inbox."""
+    office_id = session_id.removesuffix("_office")
+    office = offices().get(office_id)
+    key = _chat_key(agent_key)
+    if office is None or not session_id.endswith("_office"):
+        raise HTTPException(status_code=404, detail="Not an office")
+    if key != "boss" and key not in office.staff:
+        raise HTTPException(status_code=404, detail=f"No agent '{agent_key}' in {office.title}")
+    return _msg_json(await _add_message(session_id, key, "stef", body.text))
+
+
+@router.get("/office/{office_id}/inbox/{agent}")
+async def bot_inbox(
+    office_id: str,
+    agent: str,
+    x_office_key: Annotated[str, Header()] = "",
+    peek: bool = False,
+) -> list[dict[str, Any]]:
+    """Bots: collect unread messages from Stef (marked read unless ?peek=true).
+
+    Use agent "boss" (or the office id) for the office's manager bot.
+    """
+    office = _get_office(office_id)
+    _check_key(office.id, x_office_key)
+    key = "boss" if agent in ("boss", "main", office.id) else agent
+    async with get_session_factory()() as db:
+        rows = list(
+            (
+                await db.execute(
+                    select(OfficeMessage)
+                    .where(OfficeMessage.session_id == office.session_id)
+                    .where(OfficeMessage.agent_key == key)
+                    .where(OfficeMessage.sender == "stef")
+                    .where(OfficeMessage.read_at.is_(None))
+                    .order_by(OfficeMessage.id)
+                )
+            ).scalars()
+        )
+        if not peek:
+            now = datetime.now(UTC)
+            for m in rows:
+                m.read_at = now
+            await db.commit()
+        return [_msg_json(m) for m in rows]

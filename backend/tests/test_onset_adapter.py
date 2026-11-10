@@ -202,3 +202,44 @@ def test_work_tab_lists_all_agents_including_bare_approvals() -> None:
     assert keys == [("analyst", "Report"), ("social", "Reel plan")]
     assert items[1]["detail"] is None and items[1]["needsApproval"] is True
     assert all(i["title"] != "Just working" for i in items)
+
+
+def test_chat_round_trip() -> None:
+    # Stef briefs the Analyst from the office (no bot key needed: behind Access).
+    r = client.post(
+        f"/api/v1/office-chat/{SESSION_ID}/analyst", json={"text": "Focus on trial to paid"}
+    )
+    assert r.status_code == 200
+    # Bot collects it with its key; second call is empty (marked read).
+    inbox = client.get("/api/v1/office/onset/inbox/analyst", headers={"X-Office-Key": KEY})
+    assert [m["text"] for m in inbox.json()] == ["Focus on trial to paid"]
+    again = client.get("/api/v1/office/onset/inbox/analyst", headers={"X-Office-Key": KEY})
+    assert again.json() == []
+    # Wrong key can't read the inbox.
+    bad = client.get("/api/v1/office/onset/inbox/analyst", headers={"X-Office-Key": "x"})
+    assert bad.status_code == 401
+    # Bot replies via its status update; thread shows both sides in order.
+    body = {"agent": "analyst", "task": "Brief received", "reply": "On it, report by Friday"}
+    assert post(body).status_code == 200
+    thread = client.get(f"/api/v1/office-chat/{SESSION_ID}/analyst").json()
+    assert [(m["sender"], m["text"]) for m in thread[-2:]] == [
+        ("stef", "Focus on trial to paid"),
+        ("bot", "On it, report by Friday"),
+    ]
+    # Boss chat works via "main"/"boss"/office id.
+    client.post(f"/api/v1/office-chat/{SESSION_ID}/main", json={"text": "Plan the week"})
+    boss_inbox = client.get("/api/v1/office/onset/inbox/onset", headers={"X-Office-Key": KEY})
+    assert [m["text"] for m in boss_inbox.json()] == ["Plan the week"]
+
+
+def test_chat_rejects_unknown_agent_and_secrets() -> None:
+    assert (
+        client.post(f"/api/v1/office-chat/{SESSION_ID}/nobody", json={"text": "hi"}).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/v1/office-chat/{SESSION_ID}/email", json={"text": "password: hunter2hunter2"}
+        ).status_code
+        == 422
+    )

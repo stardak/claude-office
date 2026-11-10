@@ -7,6 +7,7 @@ import { useGameStore, selectSessionId } from "@/stores/gameStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { AgentAnimationState } from "@/stores/gameStore";
 import { useOfficeWork } from "./OfficeWorkPanel";
+import { OfficeChat } from "./OfficeChat";
 
 const POPUP_WIDTH = 260;
 const WORK_POPUP_WIDTH = 460;
@@ -62,11 +63,12 @@ export default function AgentPopup(): ReactNode {
   // Viewport-clamped positioning (wider, taller when there's work to read)
   const vw = window.innerWidth;
   const vh = window.innerHeight;
+  const roomy = isOffice || work.length > 0;
   const width = Math.min(
-    work.length > 0 ? WORK_POPUP_WIDTH : POPUP_WIDTH,
+    roomy ? WORK_POPUP_WIDTH : POPUP_WIDTH,
     vw - 2 * POPUP_MARGIN,
   );
-  const height = work.length > 0 ? Math.min(560, vh - 2 * POPUP_MARGIN) : 200;
+  const height = roomy ? Math.min(680, vh - 2 * POPUP_MARGIN) : 200;
   let x = focusPopup.screenX + 20;
   let y = focusPopup.screenY - 60;
   if (x + width > vw - POPUP_MARGIN) x = focusPopup.screenX - width - 20;
@@ -96,12 +98,12 @@ export default function AgentPopup(): ReactNode {
     >
       <div className="absolute inset-0" />
       <div
-        className="absolute bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-4 flex flex-col"
+        className="absolute bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-4 flex flex-col overflow-y-auto"
         style={{
           left: x,
           top: y,
           width,
-          maxHeight: work.length > 0 ? height : undefined,
+          maxHeight: roomy ? height : undefined,
         }}
       >
         <div className="flex items-center gap-2 mb-3">
@@ -171,7 +173,7 @@ export default function AgentPopup(): ReactNode {
               )}
             </div>
             {shownWork.detail && (
-              <div className="flex-1 min-h-0 overflow-auto whitespace-pre-wrap break-words text-[13px] leading-relaxed text-neutral-200 bg-neutral-950 border border-neutral-800 rounded-lg p-3">
+              <div className="max-h-60 overflow-auto whitespace-pre-wrap break-words text-[13px] leading-relaxed text-neutral-200 bg-neutral-950 border border-neutral-800 rounded-lg p-3">
                 {shownWork.detail}
               </div>
             )}
@@ -185,6 +187,16 @@ export default function AgentPopup(): ReactNode {
                 Open {new URL(shownWork.link).hostname} ↗
               </a>
             )}
+          </div>
+        )}
+
+        {isOffice && workKey && (
+          <div className="mb-3">
+            <OfficeChat
+              sessionId={sessionId ?? ""}
+              agentKey={workKey}
+              agentName={displayName}
+            />
           </div>
         )}
 

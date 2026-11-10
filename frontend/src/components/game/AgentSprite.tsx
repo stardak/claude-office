@@ -208,8 +208,9 @@ function AgentSpriteComponent({
     <pixiContainer
       x={position.x}
       y={position.y}
-      onPointerTap={handlePointerTap}
-      interactive={clickToFocusEnabled}
+      onPointerDown={handlePointerTap}
+      eventMode={clickToFocusEnabled ? "static" : "passive"}
+      cursor={clickToFocusEnabled ? "pointer" : "default"}
     >
       {/* Agent capsule body */}
       <pixiGraphics draw={drawCallback} />

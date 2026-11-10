@@ -19,7 +19,16 @@ import {
   Sprite,
   Application as PixiApplication,
 } from "pixi.js";
-import { useMemo, useEffect, useRef, useCallback, type ReactNode } from "react";
+import {
+  useMemo,
+  useEffect,
+  useRef,
+  useCallback,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
+import { useAttentionStore } from "@/stores/attentionStore";
+import { usePreferencesStore } from "@/stores/preferencesStore";
 import {
   TransformWrapper,
   TransformComponent,
@@ -214,12 +223,51 @@ export function OfficeGame(): ReactNode {
 
   // Subscribe to store state
   const agents = useGameStore(useShallow(selectAgents));
+  const openFocusPopup = useAttentionStore((st) => st.openFocusPopup);
+  const clickToFocusEnabled = usePreferencesStore(
+    (st) => st.clickToFocusEnabled,
+  );
   const boss = useGameStore(selectBoss);
   // Onset offices use session ids like "hostmate_office"; the boss wears that name.
   const sessionId = useGameStore(selectSessionId);
   const bossName = /^[a-z0-9-]+_office$/.test(sessionId)
     ? sessionId.replace(/_office$/, "")
     : "onset";
+
+  // Click a character to open its popup (work + chat). Done at DOM level by
+  // hit-testing positions, because Pixi sprite events don't reach us through
+  // the zoom/pan wrapper.
+  const handleCanvasClick = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      if (!clickToFocusEnabled) return;
+      const canvas = e.currentTarget.querySelector("canvas");
+      if (!canvas) return;
+      const r = canvas.getBoundingClientRect();
+      const scale = r.width / CANVAS_WIDTH;
+      if (!scale) return;
+      const cx = (e.clientX - r.left) / scale;
+      const cy = (e.clientY - r.top) / scale;
+      const HIT = 45; // px in office coordinates, around the body
+      let best: string | null = null;
+      let bestD = HIT * HIT;
+      const consider = (id: string, x: number, y: number) => {
+        const dx = x - cx;
+        const dy = y - 10 - cy; // sprites sit slightly above their anchor
+        const d = dx * dx + dy * dy;
+        if (d < bestD) {
+          bestD = d;
+          best = id;
+        }
+      };
+      for (const a of agents.values()) {
+        if (a.currentPosition)
+          consider(a.id, a.currentPosition.x, a.currentPosition.y);
+      }
+      if (boss.position) consider("boss", boss.position.x, boss.position.y);
+      if (best) openFocusPopup(best, e.clientX, e.clientY);
+    },
+    [clickToFocusEnabled, agents, boss.position, openFocusPopup],
+  );
   const todos = useGameStore(selectTodos);
   const debugMode = useGameStore(selectDebugMode);
   const showPaths = useGameStore(selectShowPaths);
@@ -344,7 +392,10 @@ export function OfficeGame(): ReactNode {
           wrapperClass="w-full h-full"
           contentClass="w-full h-full"
         >
-          <div className="pixi-canvas-container w-full h-full">
+          <div
+            className="pixi-canvas-container w-full h-full"
+            onClick={handleCanvasClick}
+          >
             <Application
               key={`pixi-app-${hmrVersion}`}
               width={CANVAS_WIDTH}

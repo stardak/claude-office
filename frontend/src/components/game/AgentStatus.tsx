@@ -7,7 +7,12 @@
 
 "use client";
 
-import { useGameStore, selectAgents } from "@/stores/gameStore";
+import {
+  useGameStore,
+  selectAgents,
+  selectSessionId,
+} from "@/stores/gameStore";
+import { useAttentionStore } from "@/stores/attentionStore";
 import { useShallow } from "zustand/react/shallow";
 import { useTranslation } from "@/hooks/useTranslation";
 import {
@@ -85,6 +90,14 @@ function formatState(state: string): string {
 export function AgentStatus() {
   const { t } = useTranslation();
   const agents = useGameStore(useShallow(selectAgents));
+  const sessionId = useGameStore(selectSessionId);
+  const isOffice = /^[a-z0-9-]+_office$/.test(sessionId);
+  const openFocusPopup = useAttentionStore((s) => s.openFocusPopup);
+  // Click a card to open that agent's popup (work + chat), next to the card.
+  const openFor = (agentId: string, el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    openFocusPopup(agentId, r.left - 10, r.top + 60);
+  };
   const agentArray = Array.from(agents.values());
 
   // Sort by number for consistent ordering
@@ -110,6 +123,20 @@ export function AgentStatus() {
 
       {/* Agent list - scrollable, fills remaining height */}
       <div className="flex-grow overflow-y-auto p-2 space-y-2 min-h-0">
+        {isOffice && (
+          <button
+            onClick={(e) => openFor("boss", e.currentTarget)}
+            className="w-full text-left bg-amber-950/30 border border-amber-800/50 hover:border-amber-600 rounded-md px-2 py-1.5 flex items-center gap-2"
+          >
+            <span className="font-bold text-amber-200">
+              {sessionId.replace(/_office$/, "")}
+            </span>
+            <span className="text-amber-400/70 text-[10px]">boss</span>
+            <span className="ml-auto text-[10px] text-slate-400">
+              💬 chat / work
+            </span>
+          </button>
+        )}
         {agentArray.length === 0 ? (
           <div className="text-slate-600 italic p-4 text-center">
             {t("agentStatus.noAgents")}
@@ -118,7 +145,10 @@ export function AgentStatus() {
           agentArray.map((agent) => (
             <div
               key={agent.id}
-              className="bg-slate-900/60 border border-slate-800 rounded-md overflow-hidden hover:border-slate-700 transition-colors"
+              onClick={
+                isOffice ? (e) => openFor(agent.id, e.currentTarget) : undefined
+              }
+              className={`bg-slate-900/60 border border-slate-800 rounded-md overflow-hidden hover:border-slate-700 transition-colors ${isOffice ? "cursor-pointer hover:border-blue-500" : ""}`}
             >
               {/* Agent header with name and color */}
               <div

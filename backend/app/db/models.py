@@ -122,3 +122,24 @@ class OfficeWork(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+
+
+class OfficeMessage(Base):
+    """Chat between Stef and one office agent (briefs in, replies out).
+
+    Stef writes from the office (agent popup); the bot collects unread messages
+    from its inbox (GET /api/v1/office/{id}/inbox/{agent}) and answers via the
+    ``reply`` field on its status update.
+    """
+
+    __tablename__ = "office_message"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String, index=True)
+    agent_key: Mapped[str] = mapped_column(String, index=True)  # agent id, or "boss"
+    sender: Mapped[str] = mapped_column(String)  # "stef" or "bot"
+    text: Mapped[str] = mapped_column(String)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

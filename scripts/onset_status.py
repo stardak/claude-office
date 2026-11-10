@@ -6,6 +6,8 @@
     OFFICE_KEY=... python scripts/onset_status.py ads done "Hook test" --to social
     OFFICE=hostmate OFFICE_KEY=... python scripts/onset_status.py sales working "Vendor call"
     OFFICE_KEY=... python scripts/onset_status.py --demo
+    OFFICE_KEY=... python scripts/onset_status.py analyst --inbox
+    OFFICE_KEY=... python scripts/onset_status.py analyst working "Brief received" --reply "On it"
 
 OFFICE picks the company office (default onset). OFFICE_KEY is that office's
 key (ONSET_OFFICE_KEY also works for onset). Set ONSET_OFFICE_URL for a hosted
@@ -88,6 +90,7 @@ def send(
     to: str | None = None,
     detail: str | None = None,
     link: str | None = None,
+    reply: str | None = None,
 ) -> None:
     body = {
         "agent": agent,
@@ -97,6 +100,7 @@ def send(
         "handoff_to": to,
         "detail": detail,
         "link": link,
+        "reply": reply,
     }
     req = urllib.request.Request(
         URL,
@@ -130,10 +134,28 @@ def main() -> None:
     p.add_argument("--to", help="hand the work to (agent id)")
     p.add_argument("--detail", help="the finished work itself (text, or @file to read it)")
     p.add_argument("--link", help="https link to the finished work")
+    p.add_argument("--reply", help="a chat reply to Stef")
+    p.add_argument(
+        "--inbox", action="store_true", help="print (and mark read) Stef's messages for AGENT"
+    )
     p.add_argument("--demo", action="store_true", help="play a ~60s demo")
     a = p.parse_args()
     if not KEY:
         sys.exit("Set ONSET_OFFICE_KEY first")
+    if a.inbox:
+        if not a.agent:
+            sys.exit("--inbox needs an agent, e.g. --inbox analyst (or the boss id)")
+        req = urllib.request.Request(
+            f"{BASE}/api/v1/office/{OFFICE}/inbox/{a.agent}",
+            headers={k: v for k, v in HEADERS.items() if k != "Content-Type"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            msgs = json.load(r)
+        for m in msgs:
+            print(f"[{m['createdAt'][:16]}] Stef: {m['text']}")
+        if not msgs:
+            print("(inbox empty)")
+        return
     if a.demo and OFFICE != "onset":
         # The first status opens the office and seats its whole team.
         send(OFFICE, "working", "Morning plan")
@@ -148,7 +170,7 @@ def main() -> None:
         if detail and detail.startswith("@"):
             with open(detail[1:], encoding="utf-8") as f:
                 detail = f.read()
-        send(a.agent, a.status, a.task, a.approval, a.to, detail, a.link)
+        send(a.agent, a.status, a.task, a.approval, a.to, detail, a.link, a.reply)
     else:
         p.print_help()
 
