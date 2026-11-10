@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Claude Office Visualizer",
+  title: "Onset Office",
   description:
-    "Real-time pixel art visualization of Claude Code operations in a virtual office",
+    "Real-time pixel art office for the Onset AI team",
 };
 
 export default function RootLayout({

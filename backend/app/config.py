@@ -101,6 +101,10 @@ class Settings(BaseSettings):
     # and WebSocket non-browser connections.
     CLAUDE_OFFICE_API_KEY: str = ""
 
+    # Onset office adapter key (POST /api/v1/onset/status, X-Onset-Key header).
+    # Empty = adapter disabled.
+    ONSET_OFFICE_KEY: str = ""
+
     # Auto-generated per-launch token. Used as the effective API key when
     # CLAUDE_OFFICE_API_KEY is not explicitly set. This ensures state-changing
     # endpoints always require an API key even in the default configuration.

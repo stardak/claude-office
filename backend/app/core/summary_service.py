@@ -164,7 +164,7 @@ class SummaryService:
 
         # If the name came from an explicit, curated agent_type mapping, keep it
         # rather than asking the AI to "improve" it.
-        if agent_type and agent_type.strip().lower() in self._MAPPED_AGENT_TYPES:
+        if agent_type and agent_type.strip().lower() in (*self._MAPPED_AGENT_TYPES, "onset-staff"):
             return fallback
 
         if not self.enabled:
@@ -215,6 +215,10 @@ class SummaryService:
         import random
 
         taken = existing_names or set()
+
+        # Onset office staff keep the exact name the adapter sends.
+        if (agent_type or "").strip().lower() == "onset-staff" and description.strip():
+            return description.strip()
 
         if (not description or not description.strip()) and not (agent_type and agent_type.strip()):
             return self.dedupe_name("The Intern", existing_names)

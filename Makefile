@@ -1,4 +1,4 @@
-.PHONY: install install-all dev backend frontend simulate checkall lint fmt test typecheck gen-types \
+.PHONY: install install-all dev backend frontend simulate onset-demo checkall lint fmt test typecheck gen-types \
 	hooks-install hooks-uninstall hooks-reinstall hooks-status hooks-logs hooks-logs-follow hooks-logs-clear \
 	hooks-debug-on hooks-debug-off clean clean-db clean-all \
 	opencode-install opencode-uninstall opencode-reinstall opencode-build \
@@ -38,6 +38,9 @@ build-static frontend-build-static:
 
 simulate:			# Run event simulation
 	uv run python scripts/simulate_events.py
+
+onset-demo:			# Play the Onset office demo (needs ONSET_OFFICE_KEY)
+	uv run --no-project python scripts/onset_status.py --demo
 
 test-agent:			# Run single agent test
 	uv run python scripts/test_single_agent.py
