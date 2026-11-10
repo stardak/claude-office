@@ -1,0 +1,13 @@
+.git
+**/node_modules
+**/.venv
+**/__pycache__
+frontend/.next
+frontend/out
+backend/static
+backend/*.db
+hooks
+opencode-plugin
+screenshots
+*.png
+.env

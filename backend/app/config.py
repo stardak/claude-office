@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     # Empty = adapter disabled.
     ONSET_OFFICE_KEY: str = ""
 
+    # Extra browser origins allowed to open the WebSocket when the office is
+    # hosted behind a login (e.g. Cloudflare Access). Not loopback-filtered,
+    # so only list a hostname that is itself access-controlled.
+    PUBLIC_ORIGINS: list[str] = []
+
     # Auto-generated per-launch token. Used as the effective API key when
     # CLAUDE_OFFICE_API_KEY is not explicitly set. This ensures state-changing
     # endpoints always require an API key even in the default configuration.

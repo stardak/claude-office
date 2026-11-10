@@ -39,11 +39,13 @@ def _allowed_ws_origins() -> frozenset[str]:
     """
     from app.config import get_settings
 
-    return frozenset(
+    settings = get_settings()
+    local = {
         origin.rstrip("/")
-        for origin in get_settings().BACKEND_CORS_ORIGINS
+        for origin in settings.BACKEND_CORS_ORIGINS
         if urlparse(origin).hostname in _LOCALHOST_HOSTS
-    )
+    }
+    return frozenset(local | {o.rstrip("/") for o in settings.PUBLIC_ORIGINS})
 
 
 def validate_websocket_origin(websocket: WebSocket) -> bool:

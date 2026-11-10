@@ -40,7 +40,7 @@ simulate:			# Run event simulation
 	uv run python scripts/simulate_events.py
 
 onset-demo:			# Play the Onset office demo (needs ONSET_OFFICE_KEY)
-	uv run --no-project python scripts/onset_status.py --demo
+	uv run --no-project --with truststore python scripts/onset_status.py --demo
 
 test-agent:			# Run single agent test
 	uv run python scripts/test_single_agent.py

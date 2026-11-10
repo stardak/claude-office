@@ -6,7 +6,8 @@
     ONSET_OFFICE_KEY=... python scripts/onset_status.py ads done "Hook test" --to social
     ONSET_OFFICE_KEY=... python scripts/onset_status.py --demo
 
-Set ONSET_OFFICE_URL for a hosted office (default http://localhost:8000).
+Set ONSET_OFFICE_URL for a hosted office (default http://localhost:8000), plus
+CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET when it sits behind Cloudflare Access.
 Uses only the standard library so bots can copy it as-is.
 """
 
@@ -18,10 +19,27 @@ import time
 import urllib.error
 import urllib.request
 
+try:  # use the OS certificate store when available (uv's Python lacks it on macOS)
+    import truststore
+
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 URL = (
     os.environ.get("ONSET_OFFICE_URL", "http://localhost:8000").rstrip("/") + "/api/v1/onset/status"
 )
 KEY = os.environ.get("ONSET_OFFICE_KEY", "")
+HEADERS = {
+    "Content-Type": "application/json",
+    "X-Onset-Key": KEY,
+    # Cloudflare's Browser Integrity Check blocks the default Python-urllib agent (error 1010).
+    "User-Agent": "onset-office-bot/1.0",
+}
+# Hosted office behind Cloudflare Access: bots also send a service token.
+if os.environ.get("CF_ACCESS_CLIENT_ID"):
+    HEADERS["CF-Access-Client-Id"] = os.environ["CF_ACCESS_CLIENT_ID"]
+    HEADERS["CF-Access-Client-Secret"] = os.environ.get("CF_ACCESS_CLIENT_SECRET", "")
 
 DEMO = [
     ("onset", "working", "Planning this week", False, None, 4),
@@ -49,18 +67,20 @@ def send(agent: str, status: str, task: str, approval: bool = False, to: str | N
     req = urllib.request.Request(
         URL,
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", "X-Onset-Key": KEY},
+        headers=HEADERS,
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=30) as r:
             print(f"{agent:6} {status:8} {task}  -> {r.status}")
     except urllib.error.HTTPError as e:
         print(
             f"{agent:6} {status:8} {task}  -> {e.code} {e.read().decode()[:200]}", file=sys.stderr
         )
-    except urllib.error.URLError:
-        sys.exit(f"Can't reach the office at {URL}. Is `make dev` running?")
+    except TimeoutError:
+        print(f"{agent:6} {status:8} {task}  -> timed out (office slow to answer)", file=sys.stderr)
+    except urllib.error.URLError as e:
+        sys.exit(f"Can't reach the office at {URL} ({e.reason}). Is it running?")
 
 
 def main() -> None:

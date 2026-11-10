@@ -1,0 +1,25 @@
+# Onset office on Fly.io. Deliberately no [http_service]: the machine gets no
+# public IP. Traffic arrives only through the Cloudflare Tunnel, which sits
+# behind Cloudflare Access (login) at https://office.onsetworkouts.com.
+app = "onset-office-sm"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile.fly"
+
+[env]
+  SERVE_STATIC = "1"
+  LOCALHOST_ONLY = "1"
+  DATABASE_URL = "sqlite+aiosqlite:////data/visualizer.db"
+  SUMMARY_BACKEND = "disabled"
+  SUMMARY_ENABLED = "false"
+  LOG_RICH_TRACEBACKS = "0"
+  PUBLIC_ORIGINS = '["https://office.onsetworkouts.com"]'
+
+[mounts]
+  source = "office_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
