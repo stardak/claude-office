@@ -15,12 +15,12 @@ primary_region = "lhr"
   SUMMARY_ENABLED = "false"
   LOG_RICH_TRACEBACKS = "0"
   PUBLIC_ORIGINS = '["https://office.onsetworkouts.com"]'
-  # One office per company: "id:Title = agent:Name:emoji, ..." (max 7 staff).
+  # One office per company: "id:Title = agent:Name:emoji, ..." (max 8 staff).
   # The boss is the office id. Each office needs a secret:
   #   fly secrets set OFFICE_KEY_<ID>=$(openssl rand -hex 24)
   # Edit, then `fly deploy`.
   OFFICES = """
-onset:Onset = social:Social:📸, email:Email:✉️, ads:Ads:📣, analyst:Analyst:📊, creators:Creators:🤝;
+onset:Onset = social:Social:📸, email:Email:✉️, ads:Ads:📣, analyst:Analyst:📊, creators:Creators:🤝, store:App Store:🍎, retention:Retention:🔁, referrals:Referrals:🏆;
 grace:Grace & Ashes = store:Store:🛍️, ads:Ads:📣, social:Social:📸, support:Support:🎧;
 blackout:Blackout Cards = social:Social:📸, store:Store:🛍️, app:App:📱, email:Email:✉️;
 utterly:UtterlyCovered = seo:SEO:🔍, content:Content:✍️, analyst:Analyst:📊;

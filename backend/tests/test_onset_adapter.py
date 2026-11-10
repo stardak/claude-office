@@ -186,11 +186,11 @@ def test_parse_offices() -> None:
     assert offices["hostmate"].session_id == "hostmate_office"
 
 
-def test_parse_staff_ignores_junk_and_caps_at_seven() -> None:
+def test_parse_staff_ignores_junk_and_caps_at_eight() -> None:
     spec = "Bad Id:X, a, a:Dup, " + ", ".join(f"s{i}" for i in range(10))
     team = parse_staff(spec)
     assert team["a"] == ("A", "💼")
-    assert len(team) == 7
+    assert len(team) == 8
 
 
 def test_work_tab_lists_all_agents_including_bare_approvals() -> None:

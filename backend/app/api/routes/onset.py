@@ -23,7 +23,7 @@ Offices and teams come from OFFICES (fly.toml), one office per line or ";":
     hostmate:Hostmate = sales:Sales:🤝, support:Support:🎧
 
 The boss of each office is the office id ("onset", "hostmate"); staff sit in
-listed order (max 7, the office has 8 desks). Keys are Fly secrets named
+listed order (max 8, the office has 8 staff desks). Keys are Fly secrets named
 OFFICE_KEY_<ID>, so a leaked key for one company can't touch another office.
 
 The office sits behind Cloudflare Access, so content, customer data and
@@ -54,7 +54,7 @@ from app.models.events import EventAdapter
 router = APIRouter()
 
 STAFF_TYPE = "onset-staff"  # summary_service keeps these names verbatim
-MAX_STAFF = 7  # 8 desks in the office
+MAX_STAFF = 8  # 8 staff desks (the boss has its own)
 _ID = r"[a-z][a-z0-9-]{0,23}"
 _ID_RE = re.compile(_ID)
 
