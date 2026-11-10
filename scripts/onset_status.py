@@ -43,14 +43,19 @@ if os.environ.get("CF_ACCESS_CLIENT_ID"):
 
 DEMO = [
     ("onset", "working", "Planning this week", False, None, 4),
+    ("analyst", "working", "Weekly funnel review", False, None, 5),
+    ("analyst", "done", "Hook B converts best", False, "onset", 4),
     ("social", "working", "Drafting Wed carousel", False, None, 3),
     ("email", "working", "Writing Thu newsletter", False, None, 3),
+    ("creators", "working", "Reviewing new Trybe videos", False, None, 3),
     ("ads", "working", "Testing 3 new hooks", False, None, 6),
     ("ads", "done", "Hook B won", False, "social", 4),
+    ("creators", "waiting", "Top creator bonus", True, None, 6),
     ("social", "working", "Rewriting carousel with hook B", False, None, 4),
     ("email", "waiting", "Thu newsletter", True, None, 8),
-    ("onset", "waiting", "Email needs Stef", False, None, 6),
+    ("onset", "waiting", "Two things need Stef", False, None, 6),
     ("email", "working", "Scheduling Thu newsletter", False, None, 4),
+    ("creators", "done", "Chased overdue videos", False, None, 3),
     ("social", "done", "Wed carousel queued", False, "onset", 4),
     ("onset", "done", "Week planned", False, None, 0),
 ]
@@ -85,13 +90,13 @@ def send(agent: str, status: str, task: str, approval: bool = False, to: str | N
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("agent", nargs="?", choices=["onset", "social", "email", "ads"])
+    p.add_argument("agent", nargs="?", help="onset, or a staff id from ONSET_STAFF (e.g. social)")
     p.add_argument(
         "status", nargs="?", choices=["working", "waiting", "idle", "done"], default="working"
     )
     p.add_argument("task", nargs="?", default="")
     p.add_argument("--approval", action="store_true", help="flag that this needs Stef's OK")
-    p.add_argument("--to", choices=["onset", "social", "email", "ads"], help="hand the work to")
+    p.add_argument("--to", help="hand the work to (agent id)")
     p.add_argument("--demo", action="store_true", help="play a ~60s demo")
     a = p.parse_args()
     if not KEY:

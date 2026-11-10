@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     # Empty = adapter disabled.
     ONSET_OFFICE_KEY: str = ""
 
+    # Onset office staff desks, in desk order: "id:Name:icon, ...". The boss
+    # ("onset") is implicit. Edit in fly.toml and redeploy to change the team.
+    ONSET_STAFF: str = (
+        "social:Social:📸, email:Email:✉️, ads:Ads:📣, analyst:Analyst:📊, creators:Creators:🤝"
+    )
+
     # Extra browser origins allowed to open the WebSocket when the office is
     # hosted behind a login (e.g. Cloudflare Access). Not loopback-filtered,
     # so only list a hostname that is itself access-controlled.

@@ -15,6 +15,8 @@ primary_region = "lhr"
   SUMMARY_ENABLED = "false"
   LOG_RICH_TRACEBACKS = "0"
   PUBLIC_ORIGINS = '["https://office.onsetworkouts.com"]'
+  # The team, in desk order (max 7). id:Name:icon. Add/remove, then `fly deploy`.
+  ONSET_STAFF = "social:Social:📸, email:Email:✉️, ads:Ads:📣, analyst:Analyst:📊, creators:Creators:🤝"
 
 [mounts]
   source = "office_data"
