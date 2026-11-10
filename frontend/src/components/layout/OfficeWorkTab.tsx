@@ -18,6 +18,15 @@ import type { OfficeWorkItem } from "@/components/attention/OfficeWorkPanel";
 
 const REFRESH_MS = 10_000;
 
+/**
+ * Where "Needs your OK" cards open when the bot didn't send its own link.
+ * Keyed by office session id.
+ */
+const APPROVALS_URL: Record<string, string> = {
+  onset_office:
+    "https://cursor.com/canvas/store-2e81d1d8-22bf-41f9-8023-83abea66e590/f88662c3-31e1-49de-9775-34074d5ed8f6",
+};
+
 interface WorkRow extends OfficeWorkItem {
   agentKey: string;
 }
@@ -81,7 +90,23 @@ export function OfficeWorkTab(): ReactNode {
             }`}
           >
             <button
-              onClick={() => setOpenId(open ? null : w.id)}
+              onClick={() => {
+                // Approval cards open the item (or the approvals board) in a
+                // new tab; other cards expand to show the work inline.
+                const target = w.needsApproval
+                  ? (w.link ?? APPROVALS_URL[sessionId])
+                  : undefined;
+                if (target) {
+                  window.open(target, "_blank", "noopener,noreferrer");
+                } else {
+                  setOpenId(open ? null : w.id);
+                }
+              }}
+              title={
+                w.needsApproval
+                  ? "Open for approval in a new tab"
+                  : undefined
+              }
               className="w-full text-left px-3 py-2 flex flex-col gap-1"
             >
               <div className="flex items-center gap-2 text-[11px]">
@@ -105,12 +130,25 @@ export function OfficeWorkTab(): ReactNode {
                   {w.detail}
                 </div>
               )}
+              {w.needsApproval && (
+                <span className="text-[11px] text-orange-300/80">
+                  Click to approve ↗
+                </span>
+              )}
               {!w.detail && !w.link && (
                 <div className="text-[11px] text-slate-500 italic">
                   No content sent with this one.
                 </div>
               )}
             </button>
+            {w.needsApproval && w.detail && (
+              <button
+                onClick={() => setOpenId(open ? null : w.id)}
+                className="mx-3 mb-2 text-[11px] text-slate-400 hover:text-white underline"
+              >
+                {open ? "Hide details" : "Show details"}
+              </button>
+            )}
             {open && (w.detail || w.link) && (
               <div className="px-3 pb-3">
                 {w.detail && (

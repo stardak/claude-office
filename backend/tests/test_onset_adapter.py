@@ -243,3 +243,21 @@ def test_chat_rejects_unknown_agent_and_secrets() -> None:
         ).status_code
         == 422
     )
+
+
+def test_inbox_accepts_onset_key_header_and_onset_route() -> None:
+    client.post(f"/api/v1/office-chat/{SESSION_ID}/email", json={"text": "Shorter subject"})
+    peek = client.get(
+        "/api/v1/office/onset/inbox/email?peek=true", headers={"X-Onset-Key": KEY}
+    )
+    assert peek.status_code == 200
+    assert [m["text"] for m in peek.json()] == ["Shorter subject"]
+    got = client.get("/api/v1/onset/inbox/email", headers={"X-Onset-Key": KEY})
+    assert [(m["sender"], m["text"]) for m in got.json()] == [("stef", "Shorter subject")]
+    assert set(got.json()[0]) == {"id", "sender", "text", "read", "createdAt"}
+    assert client.get("/api/v1/onset/inbox/email", headers={"X-Onset-Key": KEY}).json() == []
+    # Status on the office route also accepts X-Onset-Key.
+    r = client.post(
+        "/api/v1/office/onset/status", json={"agent": "email"}, headers={"X-Onset-Key": KEY}
+    )
+    assert r.status_code == 200

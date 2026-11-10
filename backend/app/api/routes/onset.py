@@ -348,9 +348,10 @@ async def office_status(
     body: OfficeStatus,
     ep: Annotated[EventProcessor, Depends(get_event_processor)],
     x_office_key: Annotated[str, Header()] = "",
+    x_onset_key: Annotated[str, Header()] = "",
 ) -> dict[str, str]:
     office = _get_office(office_id)
-    _check_key(office.id, x_office_key)
+    _check_key(office.id, x_office_key or x_onset_key)
     return await _apply(ep, office, body)
 
 
@@ -438,14 +439,17 @@ async def bot_inbox(
     office_id: str,
     agent: str,
     x_office_key: Annotated[str, Header()] = "",
+    x_onset_key: Annotated[str, Header()] = "",
     peek: bool = False,
 ) -> list[dict[str, Any]]:
     """Bots: collect unread messages from Stef (marked read unless ?peek=true).
 
-    Use agent "boss" (or the office id) for the office's manager bot.
+    Accepts the office key as X-Office-Key or X-Onset-Key. Use agent "boss"
+    (or the office id) for the office's manager bot. Returns a list of
+    {id, sender: "stef", text, read, createdAt}, oldest first.
     """
     office = _get_office(office_id)
-    _check_key(office.id, x_office_key)
+    _check_key(office.id, x_office_key or x_onset_key)
     key = "boss" if agent in ("boss", "main", office.id) else agent
     async with get_session_factory()() as db:
         rows = list(
@@ -466,3 +470,16 @@ async def bot_inbox(
                 m.read_at = now
             await db.commit()
         return [_msg_json(m) for m in rows]
+
+
+@router.get("/onset/inbox/{agent}")
+async def onset_inbox(
+    agent: str,
+    x_onset_key: Annotated[str, Header()] = "",
+    x_office_key: Annotated[str, Header()] = "",
+    peek: bool = False,
+) -> list[dict[str, Any]]:
+    """Onset bots: same as /office/onset/inbox/{agent}, matching /onset/status."""
+    return await bot_inbox(
+        "onset", agent, x_office_key=x_office_key, x_onset_key=x_onset_key, peek=peek
+    )
