@@ -246,8 +246,8 @@ async def _apply(ep: EventProcessor, office: Office, body: OfficeStatus) -> dict
                 sm.agents[body.agent].current_task = body.task
         await broadcast_state(office.session_id, sm)
 
-    # 3. Finished work, if any, saved for the click-through viewer.
-    if body.detail or body.link:
+    # 3. Finished work (or an approval request) saved for the Work tab.
+    if body.detail or body.link or body.needs_approval:
         await _save_work(office, "boss" if is_boss else body.agent, task, body)
 
     return {"status": "ok", "office": office.id, "session_id": office.session_id}
@@ -283,6 +283,34 @@ async def _save_work(office: Office, agent_key: str, title: str, body: OfficeSta
         await db.commit()
 
 
+def _work_json(w: OfficeWork) -> dict[str, Any]:
+    return {
+        "id": w.id,
+        "agentKey": w.agent_key,
+        "title": w.title,
+        "status": w.status,
+        "needsApproval": w.needs_approval,
+        "detail": w.detail,
+        "link": w.link,
+        "createdAt": w.created_at.isoformat(),
+    }
+
+
+@router.get("/office-work/{session_id}")
+async def office_work_all(session_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """All finished work in one office, newest first (the Work tab)."""
+    async with get_session_factory()() as db:
+        rows = (
+            await db.execute(
+                select(OfficeWork)
+                .where(OfficeWork.session_id == session_id)
+                .order_by(OfficeWork.id.desc())
+                .limit(max(1, min(limit, 200)))
+            )
+        ).scalars()
+        return [_work_json(w) for w in rows]
+
+
 @router.get("/office-work/{session_id}/{agent_key}")
 async def office_work(session_id: str, agent_key: str, limit: int = 10) -> list[dict[str, Any]]:
     """Finished work for one agent, newest first (read by the agent popup)."""
@@ -298,18 +326,7 @@ async def office_work(session_id: str, agent_key: str, limit: int = 10) -> list[
                 .limit(max(1, min(limit, KEEP_WORK)))
             )
         ).scalars()
-        return [
-            {
-                "id": w.id,
-                "title": w.title,
-                "status": w.status,
-                "needsApproval": w.needs_approval,
-                "detail": w.detail,
-                "link": w.link,
-                "createdAt": w.created_at.isoformat(),
-            }
-            for w in rows
-        ]
+        return [_work_json(w) for w in rows]
 
 
 def _get_office(office_id: str) -> Office:

@@ -191,3 +191,14 @@ def test_parse_staff_ignores_junk_and_caps_at_seven() -> None:
     team = parse_staff(spec)
     assert team["a"] == ("A", "💼")
     assert len(team) == 7
+
+
+def test_work_tab_lists_all_agents_including_bare_approvals() -> None:
+    assert post({"agent": "social", "task": "Reel plan", "needs_approval": True}).status_code == 200
+    assert post({"agent": "analyst", "task": "Report", "detail": "All good"}).status_code == 200
+    assert post({"agent": "ads", "task": "Just working"}).status_code == 200  # not saved
+    items = client.get(f"/api/v1/office-work/{SESSION_ID}").json()
+    keys = [(i["agentKey"], i["title"]) for i in items[:2]]
+    assert keys == [("analyst", "Report"), ("social", "Reel plan")]
+    assert items[1]["detail"] is None and items[1]["needsApproval"] is True
+    assert all(i["title"] != "Just working" for i in items)

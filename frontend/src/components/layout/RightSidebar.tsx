@@ -4,6 +4,11 @@ import { useState } from "react";
 import { AgentStatus } from "@/components/game/AgentStatus";
 import { EventLog } from "@/components/layout/EventLog";
 import { ConversationHistory } from "@/components/layout/ConversationHistory";
+import {
+  OfficeWorkTab,
+  isOfficeSession,
+} from "@/components/layout/OfficeWorkTab";
+import { useGameStore, selectSessionId } from "@/stores/gameStore";
 import { useDragResize } from "@/hooks/useDragResize";
 import { useTranslation } from "@/hooks/useTranslation";
 
@@ -31,9 +36,16 @@ const getMaxPanelHeight = () => Math.floor(window.innerHeight * 0.7);
  */
 export function RightSidebar(): React.ReactNode {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<"events" | "conversation">(
-    "events",
-  );
+  const sessionId = useGameStore(selectSessionId);
+  const isOffice = isOfficeSession(sessionId);
+  const [chosenTab, setActiveTab] = useState<
+    "work" | "events" | "conversation" | null
+  >(null);
+  // Offices open on the Work tab; everything else keeps Events first.
+  const activeTab =
+    chosenTab === "work" && !isOffice
+      ? "events"
+      : (chosenTab ?? (isOffice ? "work" : "events"));
 
   const {
     size: sidebarWidth,
@@ -96,9 +108,21 @@ export function RightSidebar(): React.ReactNode {
       <div className="min-h-0 flex flex-col flex-grow">
         {/* Tab header */}
         <div className="flex border-b border-slate-700 bg-slate-900 rounded-t-lg flex-shrink-0">
+          {isOffice && (
+            <button
+              onClick={() => setActiveTab("work")}
+              className={`flex-1 px-3 py-2 text-[11px] font-bold uppercase tracking-wider transition-colors rounded-tl-lg ${
+                activeTab === "work"
+                  ? "text-emerald-400 border-b-2 border-emerald-500 bg-slate-950/50"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              Work
+            </button>
+          )}
           <button
             onClick={() => setActiveTab("events")}
-            className={`flex-1 px-3 py-2 text-[11px] font-bold uppercase tracking-wider transition-colors rounded-tl-lg ${
+            className={`flex-1 px-3 py-2 text-[11px] font-bold uppercase tracking-wider transition-colors ${isOffice ? "" : "rounded-tl-lg"} ${
               activeTab === "events"
                 ? "text-orange-400 border-b-2 border-orange-500 bg-slate-950/50"
                 : "text-slate-500 hover:text-slate-300"
@@ -120,7 +144,13 @@ export function RightSidebar(): React.ReactNode {
 
         {/* Tab content */}
         <div className="flex-grow min-h-0">
-          {activeTab === "events" ? <EventLog /> : <ConversationHistory />}
+          {activeTab === "work" ? (
+            <OfficeWorkTab />
+          ) : activeTab === "events" ? (
+            <EventLog />
+          ) : (
+            <ConversationHistory />
+          )}
         </div>
       </div>
     </aside>
