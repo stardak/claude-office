@@ -247,9 +247,7 @@ def test_chat_rejects_unknown_agent_and_secrets() -> None:
 
 def test_inbox_accepts_onset_key_header_and_onset_route() -> None:
     client.post(f"/api/v1/office-chat/{SESSION_ID}/email", json={"text": "Shorter subject"})
-    peek = client.get(
-        "/api/v1/office/onset/inbox/email?peek=true", headers={"X-Onset-Key": KEY}
-    )
+    peek = client.get("/api/v1/office/onset/inbox/email?peek=true", headers={"X-Onset-Key": KEY})
     assert peek.status_code == 200
     assert [m["text"] for m in peek.json()] == ["Shorter subject"]
     got = client.get("/api/v1/onset/inbox/email", headers={"X-Onset-Key": KEY})
@@ -261,3 +259,133 @@ def test_inbox_accepts_onset_key_header_and_onset_route() -> None:
         "/api/v1/office/onset/status", json={"agent": "email"}, headers={"X-Onset-Key": KEY}
     )
     assert r.status_code == 200
+
+
+# --- Questions / answers / manager inbox --------------------------------------
+
+ONSET_HEADERS = {"X-Onset-Key": KEY}
+Q = {
+    "id": "q-2026-11-10-001",
+    "text": "Post at 12:00 or 19:00 Lisbon?",
+    "options": ["12:00", "19:00"],
+    "allow_text": True,
+    "link": "https://example.com/approvals",
+}
+
+
+def _questions() -> list[dict[str, object]]:
+    return client.get(f"/api/v1/office-questions/{SESSION_ID}").json()
+
+
+def _answer(qid: str, answer: str, headers: dict[str, str] | None = None):  # type: ignore[no-untyped-def]
+    return client.post(
+        f"/api/v1/office-questions/{SESSION_ID}/{qid}/answer",
+        json={"answer": answer},
+        headers=headers or {},
+    )
+
+
+def test_question_posts_shows_and_upserts() -> None:
+    body = {"agent": "social", "task": "Scheduling reel", "question": Q}
+    assert post(body).status_code == 200
+    assert post({**body, "question": {**Q, "text": "Post at 12:00 or 20:00?"}}).status_code == 200
+    mine = [q for q in _questions() if q["id"] == Q["id"]]
+    assert len(mine) == 1  # same id updates, no duplicate
+    assert mine[0]["agent"] == "social"
+    assert mine[0]["text"] == "Post at 12:00 or 20:00?"
+    assert mine[0]["options"] == ["12:00", "19:00"]
+    assert mine[0]["link"] == "https://example.com/approvals"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {**Q, "text": "x" * 201},
+        {**Q, "options": ["a"] * 7},
+        {**Q, "options": ["x" * 41]},
+        {**Q, "link": "http://insecure.example"},
+        {**Q, "id": "x" * 65},
+    ],
+)
+def test_question_validation(bad: dict[str, object]) -> None:
+    assert post({"agent": "social", "question": bad}).status_code == 422
+
+
+def test_full_question_round_trip_and_inbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.access_identity as ident
+
+    qid = "q-roundtrip-1"
+    post({"agent": "email", "task": "Newsletter", "question": {**Q, "id": qid}})
+
+    # Behind Cloudflare: signed JWT required; service tokens (no email) refused.
+    monkeypatch.setattr(get_settings(), "ACCESS_TEAM_DOMAIN", "https://team.example")
+    monkeypatch.setattr(get_settings(), "ANSWER_EMAILS", "stef@example.com")
+    claims_by_token = {
+        "human": {"email": "stef@example.com"},
+        "bot": {"common_name": "abc.access"},
+        "other": {"email": "someone@else.com"},
+    }
+    monkeypatch.setattr(ident, "_verify", lambda token, team, aud: claims_by_token[token])
+    assert _answer(qid, "12:00").status_code == 401
+    bot = {"Cf-Access-Jwt-Assertion": "bot"}
+    assert _answer(qid, "12:00", bot).status_code == 403
+    assert _answer(qid, "12:00", {"Cf-Access-Jwt-Assertion": "other"}).status_code == 403
+    human = {"Cf-Access-Jwt-Assertion": "human"}
+    r = _answer(qid, "12:00", human)
+    assert r.status_code == 200
+    assert r.json()["answer"] == "12:00" and r.json()["answeredBy"] == "stef@example.com"
+    # Can change it before onset collects.
+    assert _answer(qid, "Neither, 18:30 please", human).status_code == 200
+
+    # Inbox needs the key.
+    assert client.get("/api/v1/onset/inbox").status_code == 401
+    inbox = client.get("/api/v1/onset/inbox", headers=ONSET_HEADERS)
+    assert inbox.status_code == 200
+    item = next(i for i in inbox.json() if i["id"] == qid)
+    assert item == {
+        "id": qid,
+        "agent": "email",
+        "question_text": Q["text"],
+        "answer": "Neither, 18:30 please",
+        "answered_at": item["answered_at"],
+        "answered_by": "stef@example.com",
+    }
+    assert item["answered_at"].endswith("Z")
+    # since in the future filters it out.
+    later = client.get("/api/v1/onset/inbox?since=2099-01-01T00:00:00Z", headers=ONSET_HEADERS)
+    assert all(i["id"] != qid for i in later.json())
+
+    ack = client.post("/api/v1/onset/inbox/ack", json={"ids": [qid]}, headers=ONSET_HEADERS)
+    assert ack.status_code == 200 and ack.json()["acked"] == 1
+    again = client.get("/api/v1/onset/inbox", headers=ONSET_HEADERS).json()
+    assert all(i["id"] != qid for i in again)
+    # Locked once collected.
+    assert _answer(qid, "19:00", human).status_code == 409
+    # A bot token can't send briefs either.
+    brief = client.post(
+        f"/api/v1/office-chat/{SESSION_ID}/analyst", json={"text": "hi"}, headers=bot
+    )
+    assert brief.status_code == 403
+
+
+def test_briefs_come_through_manager_inbox_and_ack() -> None:
+    client.post(f"/api/v1/office-chat/{SESSION_ID}/analyst", json={"text": "Focus on trials"})
+    items = client.get("/api/v1/onset/inbox", headers=ONSET_HEADERS).json()
+    brief = next(i for i in items if i["answer"] == "Focus on trials")
+    assert brief["agent"] == "stef" and brief["to"] == "analyst"
+    assert brief["id"].startswith("brief-")
+    client.post("/api/v1/onset/inbox/ack", json={"ids": [brief["id"]]}, headers=ONSET_HEADERS)
+    items = client.get("/api/v1/onset/inbox", headers=ONSET_HEADERS).json()
+    assert all(i["id"] != brief["id"] for i in items)
+
+
+def test_close_question_and_option_only_answers() -> None:
+    qid = "q-close-1"
+    post({"agent": "ads", "question": {"id": qid, "text": "Budget A or B?", "options": ["A", "B"]}})
+    assert _answer(qid, "C").status_code == 422  # options only, no free text
+    assert _answer(qid, "A").status_code == 200
+    assert client.post("/api/v1/onset/question/close", json={"id": qid}).status_code == 401
+    r = client.post("/api/v1/onset/question/close", json={"id": qid}, headers=ONSET_HEADERS)
+    assert r.status_code == 200
+    assert all(q["id"] != qid for q in _questions())
+    assert _answer(qid, "B").status_code == 404

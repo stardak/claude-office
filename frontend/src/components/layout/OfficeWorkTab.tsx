@@ -15,6 +15,7 @@ import {
   selectAgents,
 } from "@/stores/gameStore";
 import type { OfficeWorkItem } from "@/components/attention/OfficeWorkPanel";
+import { OfficeQuestions, useOfficeQuestions } from "./OfficeQuestions";
 
 const REFRESH_MS = 10_000;
 
@@ -67,7 +68,9 @@ export function OfficeWorkTab(): ReactNode {
   const nameOf = (key: string) =>
     key === "boss" ? bossName : (agents.get(key)?.name ?? key);
 
-  if (rows.length === 0) {
+  const questions = useOfficeQuestions(sessionId, isOfficeSession(sessionId));
+
+  if (rows.length === 0 && questions.items.length === 0) {
     return (
       <div className="h-full flex items-center justify-center p-6 text-center text-slate-500 text-xs italic font-mono">
         Nothing handed in yet. Bots appear here when they send a status with
@@ -78,6 +81,12 @@ export function OfficeWorkTab(): ReactNode {
 
   return (
     <div className="h-full overflow-y-auto p-2 space-y-2 bg-slate-950/40">
+      <OfficeQuestions
+        sessionId={sessionId}
+        items={questions.items}
+        nameOf={nameOf}
+        onAnswered={() => void questions.reload()}
+      />
       {rows.map((w) => {
         const open = openId === w.id;
         return (
@@ -103,9 +112,7 @@ export function OfficeWorkTab(): ReactNode {
                 }
               }}
               title={
-                w.needsApproval
-                  ? "Open for approval in a new tab"
-                  : undefined
+                w.needsApproval ? "Open for approval in a new tab" : undefined
               }
               className="w-full text-left px-3 py-2 flex flex-col gap-1"
             >

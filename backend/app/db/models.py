@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -139,7 +139,40 @@ class OfficeMessage(Base):
     agent_key: Mapped[str] = mapped_column(String, index=True)  # agent id, or "boss"
     sender: Mapped[str] = mapped_column(String)  # "stef" or "bot"
     text: Mapped[str] = mapped_column(String)
+    sent_by: Mapped[str | None] = mapped_column(String, nullable=True)  # Access email
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
+class OfficeQuestion(Base):
+    """A question a bot asked Stef, and his answer (kept 90 days as the log).
+
+    Posted with the ``question`` field on a status update; answered from the
+    Work tab by Stef's Cloudflare Access login only; collected by the onset
+    manager bot from GET /api/v1/onset/inbox and acknowledged.
+    """
+
+    __tablename__ = "office_question"
+    __table_args__ = (UniqueConstraint("session_id", "qid", name="uq_office_question_qid"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String, index=True)
+    qid: Mapped[str] = mapped_column(String(64))
+    agent_key: Mapped[str] = mapped_column(String)
+    text: Mapped[str] = mapped_column(String)
+    options: Mapped[list[str]] = mapped_column(JSON, default=list)
+    allow_text: Mapped[bool] = mapped_column(Boolean, default=False)
+    link: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="open")  # open|answered|closed
+    answer: Mapped[str | None] = mapped_column(String, nullable=True)
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    answered_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    collected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

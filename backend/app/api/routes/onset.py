@@ -35,19 +35,20 @@ import hmac
 import os
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select
 
 from app.api.routes.events import _check_rate_limit  # pyright: ignore[reportPrivateUsage]
 from app.config import get_settings
+from app.core.access_identity import require_human
 from app.core.broadcast_service import broadcast_state
 from app.core.event_processor import EventProcessor, get_event_processor
 from app.db.database import get_session_factory
-from app.db.models import OfficeMessage, OfficeWork
+from app.db.models import OfficeMessage, OfficeQuestion, OfficeWork
 from app.models.common import BubbleContent, BubbleType
 from app.models.events import EventAdapter
 
@@ -133,6 +134,33 @@ def _check_key(office_id: str, provided: str) -> None:
         raise HTTPException(status_code=401, detail="Invalid office key")
 
 
+class QuestionIn(BaseModel):
+    """A question a bot asks Stef (shown on the Work tab, answered there)."""
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$")
+    text: str = Field(min_length=1, max_length=200)
+    options: list[str] = Field(default_factory=list, max_length=6)
+    allow_text: bool = False
+    link: str | None = Field(default=None, max_length=500, pattern=r"^https://\S+$")
+
+    @field_validator("options")
+    @classmethod
+    def short_options(cls, v: list[str]) -> list[str]:
+        out = [" ".join(o.split()) for o in v]
+        if any(not o or len(o) > 40 for o in out):
+            raise ValueError("options must be 1-40 characters each")
+        if any(_SECRET_RE.search(o) for o in out):
+            raise ValueError("rejected: looks like a secret")
+        return out
+
+    @field_validator("text")
+    @classmethod
+    def no_secret_text(cls, v: str) -> str:
+        if _SECRET_RE.search(v):
+            raise ValueError("rejected: looks like a secret")
+        return " ".join(v.split())
+
+
 class OfficeStatus(BaseModel):
     agent: str = Field(pattern=rf"^{_ID}$")
     status: Literal["working", "waiting", "idle", "done"] = "working"
@@ -142,6 +170,7 @@ class OfficeStatus(BaseModel):
     detail: str | None = Field(default=None, max_length=MAX_DETAIL)
     reply: str | None = Field(default=None, max_length=MAX_MESSAGE)
     link: str | None = Field(default=None, max_length=500, pattern=r"^https://\S+$")
+    question: QuestionIn | None = None
 
     @field_validator("task")
     @classmethod
@@ -255,6 +284,16 @@ async def _apply(ep: EventProcessor, office: Office, body: OfficeStatus) -> dict
     # 4. A chat reply to Stef.
     if body.reply:
         await _add_message(office.session_id, agent_key, "bot", body.reply)
+    # 5. A question for Stef (upserted by its id).
+    if body.question:
+        await _upsert_question(office, agent_key, body.question)
+        if sm is not None:
+            q_bubble = _bubble(f"Question: {body.question.text}", "❓")
+            if is_boss:
+                sm.boss_bubble = q_bubble
+            elif body.agent in sm.agents:
+                sm.agents[body.agent].bubble = q_bubble
+            await broadcast_state(office.session_id, sm)
 
     return {"status": "ok", "office": office.id, "session_id": office.session_id}
 
@@ -379,9 +418,17 @@ def _msg_json(m: OfficeMessage) -> dict[str, Any]:
     }
 
 
-async def _add_message(session_id: str, agent_key: str, sender: str, text: str) -> OfficeMessage:
+async def _add_message(
+    session_id: str, agent_key: str, sender: str, text: str, sent_by: str | None = None
+) -> OfficeMessage:
     async with get_session_factory()() as db:
-        msg = OfficeMessage(session_id=session_id, agent_key=agent_key, sender=sender, text=text)
+        msg = OfficeMessage(
+            session_id=session_id,
+            agent_key=agent_key,
+            sender=sender,
+            text=text,
+            sent_by=sent_by,
+        )
         db.add(msg)
         await db.commit()
         await db.refresh(msg)
@@ -422,8 +469,14 @@ async def chat_thread(session_id: str, agent_key: str, limit: int = 50) -> list[
 
 
 @router.post("/office-chat/{session_id}/{agent_key}")
-async def chat_send(session_id: str, agent_key: str, body: ChatIn) -> dict[str, Any]:
-    """Stef sends a message/brief to one agent. It waits in the bot's inbox."""
+async def chat_send(
+    session_id: str, agent_key: str, body: ChatIn, request: Request
+) -> dict[str, Any]:
+    """Stef sends a message/brief to one agent. It waits in the bot's inbox.
+
+    Only Stef's Cloudflare Access login may send (not a bot's service token).
+    """
+    who = await require_human(request)
     office_id = session_id.removesuffix("_office")
     office = offices().get(office_id)
     key = _chat_key(agent_key)
@@ -431,7 +484,7 @@ async def chat_send(session_id: str, agent_key: str, body: ChatIn) -> dict[str, 
         raise HTTPException(status_code=404, detail="Not an office")
     if key != "boss" and key not in office.staff:
         raise HTTPException(status_code=404, detail=f"No agent '{agent_key}' in {office.title}")
-    return _msg_json(await _add_message(session_id, key, "stef", body.text))
+    return _msg_json(await _add_message(session_id, key, "stef", body.text, sent_by=who))
 
 
 @router.get("/office/{office_id}/inbox/{agent}")
@@ -483,3 +536,325 @@ async def onset_inbox(
     return await bot_inbox(
         "onset", agent, x_office_key=x_office_key, x_onset_key=x_onset_key, peek=peek
     )
+
+
+# --- Questions: bots ask, Stef answers, onset collects ------------------------
+
+RETENTION = timedelta(days=90)
+MAX_ANSWER = 500
+
+
+def _iso(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:  # SQLite returns naive UTC
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _q_json(q: OfficeQuestion) -> dict[str, Any]:
+    return {
+        "id": q.qid,
+        "agent": q.agent_key,
+        "text": q.text,
+        "options": list(q.options or []),
+        "allowText": q.allow_text,
+        "link": q.link,
+        "status": q.status,
+        "answer": q.answer,
+        "answeredAt": _iso(q.answered_at),
+        "answeredBy": q.answered_by,
+        "collected": q.collected_at is not None,
+        "createdAt": _iso(q.created_at),
+    }
+
+
+async def _prune(db: Any) -> None:
+    """Keep the question/answer log and briefs for 90 days."""
+    cutoff = datetime.now(UTC) - RETENTION
+    await db.execute(delete(OfficeQuestion).where(OfficeQuestion.updated_at < cutoff))
+    await db.execute(delete(OfficeMessage).where(OfficeMessage.created_at < cutoff))
+
+
+async def _upsert_question(office: Office, agent_key: str, q: QuestionIn) -> None:
+    now = datetime.now(UTC)
+    async with get_session_factory()() as db:
+        row = (
+            await db.execute(
+                select(OfficeQuestion)
+                .where(OfficeQuestion.session_id == office.session_id)
+                .where(OfficeQuestion.qid == q.id)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = OfficeQuestion(session_id=office.session_id, qid=q.id, created_at=now)
+            db.add(row)
+        row.agent_key = agent_key
+        row.text = q.text
+        row.options = q.options
+        row.allow_text = q.allow_text
+        row.link = q.link
+        if row.status == "closed":
+            row.status = "answered" if row.answer else "open"
+        row.updated_at = now
+        await _prune(db)
+        await db.commit()
+
+
+@router.get("/office-questions/{session_id}")
+async def office_questions(session_id: str) -> list[dict[str, Any]]:
+    """Open and answered questions in one office, newest first (the Work tab)."""
+    async with get_session_factory()() as db:
+        rows = (
+            await db.execute(
+                select(OfficeQuestion)
+                .where(OfficeQuestion.session_id == session_id)
+                .where(OfficeQuestion.status != "closed")
+                .order_by(OfficeQuestion.updated_at.desc())
+                .limit(100)
+            )
+        ).scalars()
+        return [_q_json(q) for q in rows]
+
+
+class AnswerIn(BaseModel):
+    answer: str = Field(min_length=1, max_length=MAX_ANSWER)
+
+    @field_validator("answer")
+    @classmethod
+    def clean(cls, v: str) -> str:
+        if _SECRET_RE.search(v):
+            raise ValueError("rejected: looks like a secret")
+        return v.strip()
+
+
+@router.post("/office-questions/{session_id}/{qid}/answer")
+async def answer_question(
+    session_id: str, qid: str, body: AnswerIn, request: Request
+) -> dict[str, Any]:
+    """Stef answers a question. Only his Cloudflare Access login, never a bot token.
+
+    He can change the answer until onset has collected it.
+    """
+    who = await require_human(request)
+    async with get_session_factory()() as db:
+        row = (
+            await db.execute(
+                select(OfficeQuestion)
+                .where(OfficeQuestion.session_id == session_id)
+                .where(OfficeQuestion.qid == qid)
+            )
+        ).scalar_one_or_none()
+        if row is None or row.status == "closed":
+            raise HTTPException(status_code=404, detail="No open question with that id")
+        if row.collected_at is not None:
+            raise HTTPException(status_code=409, detail="Already collected by onset")
+        if row.options and body.answer not in row.options and not row.allow_text:
+            raise HTTPException(status_code=422, detail="Pick one of the options")
+        now = datetime.now(UTC)
+        row.answer = body.answer
+        row.answered_at = now
+        row.answered_by = who
+        row.status = "answered"
+        row.updated_at = now
+        await db.commit()
+        await db.refresh(row)
+        return _q_json(row)
+
+
+class CloseIn(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+
+
+async def _close_question(office: Office, qid: str) -> dict[str, str]:
+    async with get_session_factory()() as db:
+        row = (
+            await db.execute(
+                select(OfficeQuestion)
+                .where(OfficeQuestion.session_id == office.session_id)
+                .where(OfficeQuestion.qid == qid)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="No question with that id")
+        row.status = "closed"
+        row.updated_at = datetime.now(UTC)
+        await db.commit()
+    return {"status": "ok", "id": qid}
+
+
+@router.post("/onset/question/close")
+async def onset_question_close(
+    body: CloseIn,
+    x_onset_key: Annotated[str, Header()] = "",
+    x_office_key: Annotated[str, Header()] = "",
+) -> dict[str, str]:
+    office = _get_office("onset")
+    _check_key(office.id, x_onset_key or x_office_key)
+    return await _close_question(office, body.id)
+
+
+@router.post("/office/{office_id}/question/close")
+async def office_question_close(
+    office_id: str,
+    body: CloseIn,
+    x_office_key: Annotated[str, Header()] = "",
+    x_onset_key: Annotated[str, Header()] = "",
+) -> dict[str, str]:
+    office = _get_office(office_id)
+    _check_key(office.id, x_office_key or x_onset_key)
+    return await _close_question(office, body.id)
+
+
+def _parse_since(since: str | None) -> datetime | None:
+    if not since:
+        return None
+    try:
+        dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="since must be ISO 8601") from exc
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def _aware(dt: datetime | None) -> datetime | None:
+    return None if dt is None else (dt if dt.tzinfo else dt.replace(tzinfo=UTC))
+
+
+async def _manager_inbox(office: Office, since: str | None) -> list[dict[str, Any]]:
+    """Answered-but-uncollected questions plus Stef's uncollected briefs."""
+    after = _parse_since(since)
+    async with get_session_factory()() as db:
+        qs = (
+            await db.execute(
+                select(OfficeQuestion)
+                .where(OfficeQuestion.session_id == office.session_id)
+                .where(OfficeQuestion.status == "answered")
+                .where(OfficeQuestion.collected_at.is_(None))
+                .order_by(OfficeQuestion.answered_at)
+            )
+        ).scalars()
+        briefs = (
+            await db.execute(
+                select(OfficeMessage)
+                .where(OfficeMessage.session_id == office.session_id)
+                .where(OfficeMessage.sender == "stef")
+                .where(OfficeMessage.read_at.is_(None))
+                .order_by(OfficeMessage.id)
+            )
+        ).scalars()
+        out: list[dict[str, Any]] = []
+        for q in qs:
+            at = _aware(q.answered_at)
+            if after and at and at < after:
+                continue
+            out.append(
+                {
+                    "id": q.qid,
+                    "agent": q.agent_key,
+                    "question_text": q.text,
+                    "answer": q.answer,
+                    "answered_at": _iso(q.answered_at),
+                    "answered_by": q.answered_by,
+                }
+            )
+        for m in briefs:
+            at = _aware(m.created_at)
+            if after and at and at < after:
+                continue
+            to = office.id if m.agent_key == "boss" else m.agent_key
+            out.append(
+                {
+                    "id": f"brief-{m.id}",
+                    "agent": "stef",
+                    "to": to,
+                    "question_text": f"Brief for {to}",
+                    "answer": m.text,
+                    "answered_at": _iso(m.created_at),
+                    "answered_by": m.sent_by,
+                }
+            )
+        out.sort(key=lambda r: r["answered_at"] or "")
+        return out
+
+
+class AckIn(BaseModel):
+    ids: list[str] = Field(max_length=500)
+
+
+async def _ack(office: Office, ids: list[str]) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    brief_ids = [int(i[6:]) for i in ids if i.startswith("brief-") and i[6:].isdigit()]
+    q_ids = [i for i in ids if not i.startswith("brief-")]
+    acked = 0
+    async with get_session_factory()() as db:
+        if q_ids:
+            for q in (
+                await db.execute(
+                    select(OfficeQuestion)
+                    .where(OfficeQuestion.session_id == office.session_id)
+                    .where(OfficeQuestion.qid.in_(q_ids))
+                    .where(OfficeQuestion.status == "answered")
+                )
+            ).scalars():
+                q.collected_at = now
+                acked += 1
+        if brief_ids:
+            for m in (
+                await db.execute(
+                    select(OfficeMessage)
+                    .where(OfficeMessage.session_id == office.session_id)
+                    .where(OfficeMessage.id.in_(brief_ids))
+                    .where(OfficeMessage.sender == "stef")
+                )
+            ).scalars():
+                m.read_at = m.read_at or now
+                acked += 1
+        await db.commit()
+    return {"status": "ok", "acked": acked}
+
+
+@router.get("/onset/inbox")
+async def onset_manager_inbox(
+    since: str | None = None,
+    x_onset_key: Annotated[str, Header()] = "",
+    x_office_key: Annotated[str, Header()] = "",
+) -> list[dict[str, Any]]:
+    """onset: Stef's answers and briefs not yet collected. Ack them after reading."""
+    office = _get_office("onset")
+    _check_key(office.id, x_onset_key or x_office_key)
+    return await _manager_inbox(office, since)
+
+
+@router.post("/onset/inbox/ack")
+async def onset_manager_ack(
+    body: AckIn,
+    x_onset_key: Annotated[str, Header()] = "",
+    x_office_key: Annotated[str, Header()] = "",
+) -> dict[str, Any]:
+    office = _get_office("onset")
+    _check_key(office.id, x_onset_key or x_office_key)
+    return await _ack(office, body.ids)
+
+
+@router.get("/office/{office_id}/inbox")
+async def office_manager_inbox(
+    office_id: str,
+    since: str | None = None,
+    x_office_key: Annotated[str, Header()] = "",
+    x_onset_key: Annotated[str, Header()] = "",
+) -> list[dict[str, Any]]:
+    office = _get_office(office_id)
+    _check_key(office.id, x_office_key or x_onset_key)
+    return await _manager_inbox(office, since)
+
+
+@router.post("/office/{office_id}/inbox/ack")
+async def office_manager_ack(
+    office_id: str,
+    body: AckIn,
+    x_office_key: Annotated[str, Header()] = "",
+    x_onset_key: Annotated[str, Header()] = "",
+) -> dict[str, Any]:
+    office = _get_office(office_id)
+    _check_key(office.id, x_office_key or x_onset_key)
+    return await _ack(office, body.ids)

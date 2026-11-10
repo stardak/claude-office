@@ -39,3 +39,9 @@ async def migrate_schema(conn: AsyncConnection) -> None:
     for col_name, col_def in new_columns.items():
         if col_name not in existing:
             await conn.execute(text(f"ALTER TABLE sessions ADD COLUMN {col_name} {col_def}"))
+
+    # Office chat: who sent a brief (Cloudflare Access email).
+    result = await conn.execute(text("PRAGMA table_info(office_message)"))
+    msg_cols = {row[1] for row in result.fetchall()}
+    if msg_cols and "sent_by" not in msg_cols:
+        await conn.execute(text("ALTER TABLE office_message ADD COLUMN sent_by TEXT DEFAULT NULL"))

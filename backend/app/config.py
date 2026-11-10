@@ -118,6 +118,14 @@ class Settings(BaseSettings):
     # so only list a hostname that is itself access-controlled.
     PUBLIC_ORIGINS: list[str] = []
 
+    # Cloudflare Access: who may answer bot questions / send briefs from the
+    # office. The office verifies the signed Cf-Access-Jwt-Assertion header
+    # against https://<team>.cloudflareaccess.com/cdn-cgi/access/certs.
+    # Empty ACCESS_TEAM_DOMAIN = local dev (no Cloudflare), answers allowed.
+    ACCESS_TEAM_DOMAIN: str = ""  # e.g. "https://stefaiteam.cloudflareaccess.com"
+    ACCESS_AUD: str = ""  # Access application AUD tag (optional but recommended)
+    ANSWER_EMAILS: str = ""  # comma-separated human logins allowed to answer
+
     # Auto-generated per-launch token. Used as the effective API key when
     # CLAUDE_OFFICE_API_KEY is not explicitly set. This ensures state-changing
     # endpoints always require an API key even in the default configuration.
