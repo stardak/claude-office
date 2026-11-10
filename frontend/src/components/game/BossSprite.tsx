@@ -37,6 +37,7 @@ export interface BossSpriteProps {
   renderBubble?: boolean; // Whether to render bubble (default true)
   isTyping?: boolean; // Whether boss is typing (animates arms)
   isAway?: boolean; // Whether boss is away from desk (hides body, shows only furniture)
+  name?: string; // Name tag above the boss (office name, e.g. "onset")
 }
 
 // ============================================================================
@@ -204,6 +205,7 @@ function BossSpriteComponent({
   renderBubble = true,
   isTyping = false,
   isAway = false,
+  name = "onset",
 }: BossSpriteProps): ReactNode {
   // Animation state for typing
   const [typingTime, setTypingTime] = useState(0);
@@ -347,7 +349,7 @@ function BossSpriteComponent({
       {!isAway && (
         <pixiContainer y={-63} scale={0.5}>
           <pixiText
-            text="onset"
+            text={name}
             anchor={0.5}
             style={{
               fontFamily: "monospace",
@@ -391,6 +393,7 @@ export interface MobileBossProps {
   scale?: number; // Scale factor for boss body
   sunglassesTexture: Texture | null;
   headsetTexture: Texture | null;
+  name?: string;
 }
 
 function MobileBossComponent({
@@ -399,6 +402,7 @@ function MobileBossComponent({
   scale = 1.0,
   sunglassesTexture,
   headsetTexture,
+  name = "onset",
 }: MobileBossProps): ReactNode {
   const drawBossCallback = useMemo(
     () => (g: Graphics) => drawBossBody(g, "working"),
@@ -436,7 +440,7 @@ function MobileBossComponent({
       {/* Boss label */}
       <pixiContainer y={-63} scale={0.5}>
         <pixiText
-          text="onset"
+          text={name}
           anchor={0.5}
           style={{
             fontFamily: "monospace",

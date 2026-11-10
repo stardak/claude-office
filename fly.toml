@@ -15,8 +15,17 @@ primary_region = "lhr"
   SUMMARY_ENABLED = "false"
   LOG_RICH_TRACEBACKS = "0"
   PUBLIC_ORIGINS = '["https://office.onsetworkouts.com"]'
-  # The team, in desk order (max 7). id:Name:icon. Add/remove, then `fly deploy`.
-  ONSET_STAFF = "social:Social:📸, email:Email:✉️, ads:Ads:📣, analyst:Analyst:📊, creators:Creators:🤝"
+  # One office per company: "id:Title = agent:Name:emoji, ..." (max 7 staff).
+  # The boss is the office id. Each office needs a secret:
+  #   fly secrets set OFFICE_KEY_<ID>=$(openssl rand -hex 24)
+  # Edit, then `fly deploy`.
+  OFFICES = """
+onset:Onset = social:Social:📸, email:Email:✉️, ads:Ads:📣, analyst:Analyst:📊, creators:Creators:🤝;
+grace:Grace & Ashes = store:Store:🛍️, ads:Ads:📣, social:Social:📸, support:Support:🎧;
+blackout:Blackout Cards = social:Social:📸, store:Store:🛍️, app:App:📱, email:Email:✉️;
+utterly:UtterlyCovered = seo:SEO:🔍, content:Content:✍️, analyst:Analyst:📊;
+hostmate:Hostmate = sales:Sales:🤝, support:Support:🎧, content:Content:✍️, analyst:Analyst:📊;
+"""
 
 [mounts]
   source = "office_data"

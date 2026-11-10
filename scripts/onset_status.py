@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Send one Onset office status, or play a short demo.
+"""Send one office status, or play a short demo.
 
-    ONSET_OFFICE_KEY=... python scripts/onset_status.py social working "Drafting Wed carousel"
-    ONSET_OFFICE_KEY=... python scripts/onset_status.py email waiting "Thu newsletter" --approval
-    ONSET_OFFICE_KEY=... python scripts/onset_status.py ads done "Hook test" --to social
-    ONSET_OFFICE_KEY=... python scripts/onset_status.py --demo
+    OFFICE_KEY=... python scripts/onset_status.py social working "Drafting Wed carousel"
+    OFFICE_KEY=... python scripts/onset_status.py email waiting "Thu newsletter" --approval
+    OFFICE_KEY=... python scripts/onset_status.py ads done "Hook test" --to social
+    OFFICE=hostmate OFFICE_KEY=... python scripts/onset_status.py sales working "Vendor call"
+    OFFICE_KEY=... python scripts/onset_status.py --demo
 
-Set ONSET_OFFICE_URL for a hosted office (default http://localhost:8000), plus
+OFFICE picks the company office (default onset). OFFICE_KEY is that office's
+key (ONSET_OFFICE_KEY also works for onset). Set ONSET_OFFICE_URL for a hosted
+office (default http://localhost:8000), plus
 CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET when it sits behind Cloudflare Access.
 Uses only the standard library so bots can copy it as-is.
 """
@@ -26,13 +29,13 @@ try:  # use the OS certificate store when available (uv's Python lacks it on mac
 except ImportError:
     pass
 
-URL = (
-    os.environ.get("ONSET_OFFICE_URL", "http://localhost:8000").rstrip("/") + "/api/v1/onset/status"
-)
-KEY = os.environ.get("ONSET_OFFICE_KEY", "")
+OFFICE = os.environ.get("OFFICE", "onset").strip().lower()
+BASE = os.environ.get("ONSET_OFFICE_URL", "http://localhost:8000").rstrip("/")
+URL = f"{BASE}/api/v1/office/{OFFICE}/status"
+KEY = os.environ.get("OFFICE_KEY") or os.environ.get("ONSET_OFFICE_KEY", "")
 HEADERS = {
     "Content-Type": "application/json",
-    "X-Onset-Key": KEY,
+    "X-Office-Key": KEY,
     # Cloudflare's Browser Integrity Check blocks the default Python-urllib agent (error 1010).
     "User-Agent": "onset-office-bot/1.0",
 }
@@ -90,7 +93,9 @@ def send(agent: str, status: str, task: str, approval: bool = False, to: str | N
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("agent", nargs="?", help="onset, or a staff id from ONSET_STAFF (e.g. social)")
+    p.add_argument(
+        "agent", nargs="?", help="the office boss (e.g. onset) or a staff id (e.g. social)"
+    )
     p.add_argument(
         "status", nargs="?", choices=["working", "waiting", "idle", "done"], default="working"
     )
@@ -101,7 +106,12 @@ def main() -> None:
     a = p.parse_args()
     if not KEY:
         sys.exit("Set ONSET_OFFICE_KEY first")
-    if a.demo:
+    if a.demo and OFFICE != "onset":
+        # The first status opens the office and seats its whole team.
+        send(OFFICE, "working", "Morning plan")
+        time.sleep(8)
+        send(OFFICE, "done", "Team briefed")
+    elif a.demo:
         for agent, status, task, approval, to, wait in DEMO:
             send(agent, status, task, approval, to)
             time.sleep(wait)

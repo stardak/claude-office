@@ -30,6 +30,7 @@ import { performSoftReset, getHmrVersion } from "@/systems/hmrCleanup";
 
 import {
   useGameStore,
+  selectSessionId,
   selectAgents,
   selectBoss,
   selectTodos,
@@ -214,6 +215,11 @@ export function OfficeGame(): ReactNode {
   // Subscribe to store state
   const agents = useGameStore(useShallow(selectAgents));
   const boss = useGameStore(selectBoss);
+  // Onset offices use session ids like "hostmate_office"; the boss wears that name.
+  const sessionId = useGameStore(selectSessionId);
+  const bossName = /^[a-z0-9-]+_office$/.test(sessionId)
+    ? sessionId.replace(/_office$/, "")
+    : "onset";
   const todos = useGameStore(selectTodos);
   const debugMode = useGameStore(selectDebugMode);
   const showPaths = useGameStore(selectShowPaths);
@@ -595,6 +601,7 @@ export function OfficeGame(): ReactNode {
                     renderBubble={false}
                     isTyping={boss.isTyping}
                     isAway={compactionAnimation.phase !== "idle"}
+                    name={bossName}
                   />
 
                   {/* Mobile Boss (when walking to/from trash can) */}
@@ -605,6 +612,7 @@ export function OfficeGame(): ReactNode {
                       scale={compactionAnimation.bossScale}
                       sunglassesTexture={textures.sunglasses}
                       headsetTexture={textures.headset}
+                      name={bossName}
                     />
                   )}
 

@@ -39,7 +39,7 @@ build-static frontend-build-static:
 simulate:			# Run event simulation
 	uv run python scripts/simulate_events.py
 
-onset-demo:			# Play the Onset office demo (needs ONSET_OFFICE_KEY)
+onset-demo:			# Play an office demo (OFFICE=onset default; needs OFFICE_KEY)
 	uv run --no-project --with truststore python scripts/onset_status.py --demo
 
 test-agent:			# Run single agent test

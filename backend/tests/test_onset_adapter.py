@@ -1,4 +1,4 @@
-"""Tests for the Onset office adapter (POST /api/v1/onset/status)."""
+"""Tests for the company offices adapter (/api/v1/office/{id}/status, /api/v1/onset/status)."""
 
 from collections.abc import Iterator
 
@@ -6,13 +6,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.routes.events import reset_rate_limiter
-from app.api.routes.onset import SESSION_ID, parse_staff
+from app.api.routes.onset import parse_offices, parse_staff
 from app.config import get_settings
 from app.core.event_processor import event_processor
 from app.main import app
 from app.models.agents import AgentState, BossState
 
 client = TestClient(app)
+SESSION_ID = "onset_office"
 KEY = "test-onset-key"
 URL = "/api/v1/onset/status"
 
@@ -100,18 +101,64 @@ def test_unknown_agent_rejected() -> None:
 
 
 def test_team_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
-    import app.api.routes.onset as onset_route
-
-    monkeypatch.setattr(onset_route, "SESSION_ID", "onset_office_custom")
-    monkeypatch.setattr(get_settings(), "ONSET_STAFF", "seo:SEO:🔍, social:Social:📸")
-    assert post({"agent": "seo", "status": "working", "task": "Keyword sweep"}).status_code == 200
-    sm = event_processor.sessions["onset_office_custom"]
+    # Fresh office id so DB-restored desks from earlier tests don't interfere.
+    monkeypatch.setattr(get_settings(), "OFFICES", "custom = seo:SEO:🔍, social:Social:📸")
+    monkeypatch.setenv("OFFICE_KEY_CUSTOM", "k2")
+    r = client.post(
+        "/api/v1/office/custom/status",
+        json={"agent": "seo", "status": "working", "task": "Keyword sweep"},
+        headers={"X-Office-Key": "k2"},
+    )
+    assert r.status_code == 200
+    sm = event_processor.sessions["custom_office"]
     assert [(a.name, a.desk) for a in sm.agents.values()] == [("SEO", 1), ("Social", 2)]
 
 
+OFFICES = """
+onset:Onset = social:Social:📸, email:Email:✉️;
+hostmate:Hostmate = sales:Sales:🤝, support:Support:🎧
+"""
+
+
+def office_post(office: str, body: dict[str, object], key: str):  # type: ignore[no-untyped-def]
+    return client.post(f"/api/v1/office/{office}/status", json=body, headers={"X-Office-Key": key})
+
+
+def test_offices_are_separate_with_their_own_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "OFFICES", OFFICES)
+    monkeypatch.setenv("OFFICE_KEY_HOSTMATE", "hm-key")
+    # Onset's key can't drive Hostmate, and vice versa.
+    assert office_post("hostmate", {"agent": "sales"}, KEY).status_code == 401
+    assert office_post("onset", {"agent": "social"}, "hm-key").status_code == 401
+    # Unknown office.
+    assert office_post("nope", {"agent": "x"}, "hm-key").status_code == 404
+    r = office_post("hostmate", {"agent": "hostmate", "task": "Plan the week"}, "hm-key")
+    assert r.status_code == 200
+    sm = event_processor.sessions["hostmate_office"]
+    assert {a.name for a in sm.agents.values()} == {"Sales", "Support"}
+    assert sm.boss_current_task == "Plan the week"
+    # Onset staff aren't valid in Hostmate.
+    assert office_post("hostmate", {"agent": "social"}, "hm-key").status_code == 422
+    # Onset still works on the new route with its old key.
+    assert office_post("onset", {"agent": "social", "task": "Carousel"}, KEY).status_code == 200
+
+
+def test_office_without_key_is_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "OFFICES", OFFICES)
+    monkeypatch.delenv("OFFICE_KEY_HOSTMATE", raising=False)
+    assert office_post("hostmate", {"agent": "sales"}, "").status_code == 503
+
+
+def test_parse_offices() -> None:
+    offices = parse_offices(OFFICES + "\nBad Id = x; grace:Grace & Ashes = store, grace")
+    assert list(offices) == ["onset", "hostmate", "grace"]
+    assert offices["grace"].title == "Grace & Ashes"
+    assert list(offices["grace"].staff) == ["store"]  # boss id isn't a staff desk
+    assert offices["hostmate"].session_id == "hostmate_office"
+
+
 def test_parse_staff_ignores_junk_and_caps_at_seven() -> None:
-    spec = "onset:Boss, Bad Id:X, a, a:Dup, " + ", ".join(f"s{i}" for i in range(10))
+    spec = "Bad Id:X, a, a:Dup, " + ", ".join(f"s{i}" for i in range(10))
     team = parse_staff(spec)
-    assert "onset" not in team
     assert team["a"] == ("A", "💼")
     assert len(team) == 7

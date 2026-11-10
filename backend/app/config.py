@@ -105,10 +105,12 @@ class Settings(BaseSettings):
     # Empty = adapter disabled.
     ONSET_OFFICE_KEY: str = ""
 
-    # Onset office staff desks, in desk order: "id:Name:icon, ...". The boss
-    # ("onset") is implicit. Edit in fly.toml and redeploy to change the team.
-    ONSET_STAFF: str = (
-        "social:Social:📸, email:Email:✉️, ads:Ads:📣, analyst:Analyst:📊, creators:Creators:🤝"
+    # Company offices: one per line (or ";"), "id[:Title] = id:Name:icon, ...".
+    # The boss of each office is its id. Each office needs a Fly secret
+    # OFFICE_KEY_<ID> (onset also accepts ONSET_OFFICE_KEY). Edit in fly.toml.
+    OFFICES: str = (
+        "onset:Onset = social:Social:📸, email:Email:✉️, ads:Ads:📣, "
+        "analyst:Analyst:📊, creators:Creators:🤝"
     )
 
     # Extra browser origins allowed to open the WebSocket when the office is
