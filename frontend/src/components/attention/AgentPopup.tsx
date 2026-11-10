@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useCallback, type ReactNode } from "react";
+import { useEffect, useCallback, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useAttentionStore, selectFocusPopup } from "@/stores/attentionStore";
 import { useGameStore, selectSessionId } from "@/stores/gameStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { AgentAnimationState } from "@/stores/gameStore";
+import { useOfficeWork } from "./OfficeWorkPanel";
 
 const POPUP_WIDTH = 260;
+const WORK_POPUP_WIDTH = 460;
 const POPUP_MARGIN = 16;
 
 export default function AgentPopup(): ReactNode {
@@ -18,6 +20,18 @@ export default function AgentPopup(): ReactNode {
   const boss = useGameStore((s) => s.boss);
   const sessionId = useGameStore(selectSessionId);
   const { t } = useTranslation();
+  const isOffice = /_office$/.test(sessionId ?? "");
+  const rawId = focusPopup?.agentId ?? null;
+  const workKey =
+    rawId === "boss" || rawId === "main" ? "boss" : (rawId ?? null);
+  const work = useOfficeWork(sessionId ?? "", workKey);
+  // Which older item is open; tagged with the agent so it resets on switch.
+  const [picked, setPicked] = useState<{
+    agent: string | null;
+    id: number;
+  } | null>(null);
+  const openWorkId = picked?.agent === rawId ? picked.id : null;
+  const setOpenWorkId = (id: number) => setPicked({ agent: rawId, id });
 
   const handleFocusTerminal = useCallback(() => {
     if (!sessionId) return;
@@ -40,22 +54,31 @@ export default function AgentPopup(): ReactNode {
 
   if (!focusPopup) return null;
 
-  const isBoss = focusPopup.agentId === "boss";
+  const isBoss = focusPopup.agentId === "boss" || focusPopup.agentId === "main";
   const agent: AgentAnimationState | null = isBoss
     ? null
     : (agents.get(focusPopup.agentId) ?? null);
 
-  // Viewport-clamped positioning
+  // Viewport-clamped positioning (wider, taller when there's work to read)
   const vw = window.innerWidth;
   const vh = window.innerHeight;
+  const width = Math.min(
+    work.length > 0 ? WORK_POPUP_WIDTH : POPUP_WIDTH,
+    vw - 2 * POPUP_MARGIN,
+  );
+  const height = work.length > 0 ? Math.min(560, vh - 2 * POPUP_MARGIN) : 200;
   let x = focusPopup.screenX + 20;
   let y = focusPopup.screenY - 60;
-  if (x + POPUP_WIDTH > vw - POPUP_MARGIN)
-    x = focusPopup.screenX - POPUP_WIDTH - 20;
-  if (y + 200 > vh - POPUP_MARGIN) y = vh - 200 - POPUP_MARGIN;
+  if (x + width > vw - POPUP_MARGIN) x = focusPopup.screenX - width - 20;
+  if (x < POPUP_MARGIN) x = POPUP_MARGIN;
+  if (y + height > vh - POPUP_MARGIN) y = vh - height - POPUP_MARGIN;
   if (y < POPUP_MARGIN) y = POPUP_MARGIN;
+  const shownWork = work.find((w) => w.id === openWorkId) ?? work[0] ?? null;
 
-  const displayName = isBoss ? "Boss" : (agent?.name ?? focusPopup.agentId);
+  const bossName = isOffice
+    ? (sessionId ?? "").replace(/_office$/, "")
+    : "Boss";
+  const displayName = isBoss ? bossName : (agent?.name ?? focusPopup.agentId);
   const displayColor = isBoss ? "#f59e0b" : (agent?.color ?? "#888");
   const displayState = isBoss
     ? boss.backendState
@@ -73,8 +96,13 @@ export default function AgentPopup(): ReactNode {
     >
       <div className="absolute inset-0" />
       <div
-        className="absolute bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-4"
-        style={{ left: x, top: y, width: POPUP_WIDTH }}
+        className="absolute bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-4 flex flex-col"
+        style={{
+          left: x,
+          top: y,
+          width,
+          maxHeight: work.length > 0 ? height : undefined,
+        }}
       >
         <div className="flex items-center gap-2 mb-3">
           <div
@@ -114,13 +142,61 @@ export default function AgentPopup(): ReactNode {
           </div>
         </div>
 
+        {shownWork && (
+          <div className="mb-3 flex flex-col min-h-0 flex-1">
+            <div className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1">
+              Finished work
+            </div>
+            {work.length > 1 && (
+              <select
+                className="mb-2 bg-neutral-800 text-neutral-200 text-xs rounded-md px-2 py-1 border border-neutral-700"
+                value={shownWork.id}
+                onChange={(e) => setOpenWorkId(Number(e.target.value))}
+              >
+                {work.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {new Date(w.createdAt).toLocaleString()} · {w.title}
+                  </option>
+                ))}
+              </select>
+            )}
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-white text-sm font-bold truncate flex-1">
+                {shownWork.title}
+              </span>
+              {shownWork.needsApproval && (
+                <span className="text-[10px] font-bold uppercase bg-orange-500/20 text-orange-300 border border-orange-500/40 rounded px-1.5 py-0.5">
+                  Needs your OK
+                </span>
+              )}
+            </div>
+            {shownWork.detail && (
+              <div className="flex-1 min-h-0 overflow-auto whitespace-pre-wrap break-words text-[13px] leading-relaxed text-neutral-200 bg-neutral-950 border border-neutral-800 rounded-lg p-3">
+                {shownWork.detail}
+              </div>
+            )}
+            {shownWork.link && (
+              <a
+                href={shownWork.link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 text-center bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition-colors"
+              >
+                Open {new URL(shownWork.link).hostname} ↗
+              </a>
+            )}
+          </div>
+        )}
+
         <div className="flex gap-2">
-          <button
-            onClick={handleFocusTerminal}
-            className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition-colors"
-          >
-            {t("attention.popup.focusTerminal")}
-          </button>
+          {!isOffice && (
+            <button
+              onClick={handleFocusTerminal}
+              className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition-colors"
+            >
+              {t("attention.popup.focusTerminal")}
+            </button>
+          )}
           <button
             onClick={closeFocusPopup}
             className="bg-neutral-800 hover:bg-neutral-700 text-neutral-400 text-xs font-bold py-1.5 px-3 rounded-lg transition-colors"

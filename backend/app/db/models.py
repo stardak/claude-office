@@ -100,3 +100,25 @@ class UserPreference(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
+
+
+class OfficeWork(Base):
+    """Finished work an office agent handed in (email text, report, caption...).
+
+    Written by the company offices adapter (POST /api/v1/office/{id}/status with
+    ``detail`` and/or ``link``) and shown when Stef clicks that agent.
+    """
+
+    __tablename__ = "office_work"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String, index=True)
+    agent_key: Mapped[str] = mapped_column(String, index=True)  # agent id, or "boss"
+    title: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    needs_approval: Mapped[bool] = mapped_column(Boolean, default=False)
+    detail: Mapped[str | None] = mapped_column(String, nullable=True)
+    link: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

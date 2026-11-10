@@ -7,7 +7,12 @@ JSON instead of Claude Code hook events. Each company gets its own office
     POST /api/v1/office/{office}/status        e.g. /api/v1/office/hostmate/status
     X-Office-Key: <OFFICE_KEY_HOSTMATE>
     {"agent": "sales", "status": "working", "task": "Onboarding new vendor",
-     "needs_approval": false, "handoff_to": null}
+     "needs_approval": false, "handoff_to": null,
+     "detail": "optional: the finished work itself (email text, report...)",
+     "link": "optional: https link to it (Brevo draft, Google Doc...)"}
+
+When ``detail`` or ``link`` is sent, it's saved as that agent's finished work
+and shown when Stef clicks the agent (GET /api/v1/office-work/{session}/{agent}).
 
 The legacy POST /api/v1/onset/status (X-Onset-Key: ONSET_OFFICE_KEY) still
 drives the "onset" office.
@@ -21,9 +26,9 @@ The boss of each office is the office id ("onset", "hostmate"); staff sit in
 listed order (max 7, the office has 8 desks). Keys are Fly secrets named
 OFFICE_KEY_<ID>, so a leaked key for one company can't touch another office.
 
-Only short task labels are accepted: anything that looks like an email
-address, a link, money, a percentage or a long number is rejected, so customer
-data, revenue and conversion figures, and secrets can't end up on screen.
+The office sits behind Cloudflare Access, so content, customer data and
+figures are allowed. Secrets aren't: anything that looks like a password, API
+key or token is rejected, in labels and in finished work.
 """
 
 import hmac
@@ -35,11 +40,14 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import delete, select
 
 from app.api.routes.events import _check_rate_limit  # pyright: ignore[reportPrivateUsage]
 from app.config import get_settings
 from app.core.broadcast_service import broadcast_state
 from app.core.event_processor import EventProcessor, get_event_processor
+from app.db.database import get_session_factory
+from app.db.models import OfficeWork
 from app.models.common import BubbleContent, BubbleType
 from app.models.events import EventAdapter
 
@@ -50,14 +58,16 @@ MAX_STAFF = 7  # 8 desks in the office
 _ID = r"[a-z][a-z0-9-]{0,23}"
 _ID_RE = re.compile(_ID)
 
-_BLOCKED = [
-    (re.compile(r"@"), "no email addresses or handles"),
-    (re.compile(r"https?://|www\.|\.(com|co|io|net|org)\b", re.I), "no links"),
-    (re.compile(r"[£$€¥]"), "no money figures"),
-    (re.compile(r"\d{4,}"), "no long numbers"),
-    (re.compile(r"%"), "no percentages or metrics"),
-    (re.compile(r"\b(api[ _-]?keys?|tokens?|secrets?|passwords?)\b", re.I), "no secrets"),
-]
+MAX_DETAIL = 20_000
+KEEP_WORK = 20  # finished-work items kept per agent
+# Secrets never go in the office: "password: x", "api_key=...", bearer tokens,
+# common key formats (sk-..., cfast_..., ghp_..., AKIA...).
+_SECRET_RE = re.compile(
+    r"\b(api[ _-]?key|secret|password|passwd|token)\s*[:=]\s*\S+"
+    r"|\bbearer\s+[a-z0-9._-]{16,}"
+    r"|\b(sk|rk|pk)-[a-z0-9_-]{16,}|\bcfast_[a-z0-9]{16,}|\bghp_[a-z0-9]{20,}|\bAKIA[0-9A-Z]{16}",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -128,14 +138,22 @@ class OfficeStatus(BaseModel):
     task: str = Field(default="", max_length=60)
     needs_approval: bool = False
     handoff_to: str | None = Field(default=None, pattern=rf"^{_ID}$")
+    detail: str | None = Field(default=None, max_length=MAX_DETAIL)
+    link: str | None = Field(default=None, max_length=500, pattern=r"^https://\S+$")
 
     @field_validator("task")
     @classmethod
-    def short_safe_label(cls, v: str) -> str:
+    def short_label(cls, v: str) -> str:
         v = " ".join(v.split())
-        for pattern, reason in _BLOCKED:
-            if pattern.search(v):
-                raise ValueError(f"task label rejected: {reason}")
+        if _SECRET_RE.search(v):
+            raise ValueError("task label rejected: looks like a secret")
+        return v
+
+    @field_validator("detail")
+    @classmethod
+    def no_secrets(cls, v: str | None) -> str | None:
+        if v and _SECRET_RE.search(v):
+            raise ValueError("detail rejected: looks like it contains a secret")
         return v
 
 
@@ -228,7 +246,70 @@ async def _apply(ep: EventProcessor, office: Office, body: OfficeStatus) -> dict
                 sm.agents[body.agent].current_task = body.task
         await broadcast_state(office.session_id, sm)
 
+    # 3. Finished work, if any, saved for the click-through viewer.
+    if body.detail or body.link:
+        await _save_work(office, "boss" if is_boss else body.agent, task, body)
+
     return {"status": "ok", "office": office.id, "session_id": office.session_id}
+
+
+async def _save_work(office: Office, agent_key: str, title: str, body: OfficeStatus) -> None:
+    async with get_session_factory()() as db:
+        db.add(
+            OfficeWork(
+                session_id=office.session_id,
+                agent_key=agent_key,
+                title=title,
+                status="needs approval" if body.needs_approval else body.status,
+                needs_approval=body.needs_approval,
+                detail=body.detail,
+                link=body.link,
+            )
+        )
+        await db.flush()
+        keep = (
+            select(OfficeWork.id)
+            .where(OfficeWork.session_id == office.session_id)
+            .where(OfficeWork.agent_key == agent_key)
+            .order_by(OfficeWork.id.desc())
+            .limit(KEEP_WORK)
+        )
+        await db.execute(
+            delete(OfficeWork)
+            .where(OfficeWork.session_id == office.session_id)
+            .where(OfficeWork.agent_key == agent_key)
+            .where(OfficeWork.id.not_in(keep))
+        )
+        await db.commit()
+
+
+@router.get("/office-work/{session_id}/{agent_key}")
+async def office_work(session_id: str, agent_key: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Finished work for one agent, newest first (read by the agent popup)."""
+    if agent_key == "main":
+        agent_key = "boss"
+    async with get_session_factory()() as db:
+        rows = (
+            await db.execute(
+                select(OfficeWork)
+                .where(OfficeWork.session_id == session_id)
+                .where(OfficeWork.agent_key == agent_key)
+                .order_by(OfficeWork.id.desc())
+                .limit(max(1, min(limit, KEEP_WORK)))
+            )
+        ).scalars()
+        return [
+            {
+                "id": w.id,
+                "title": w.title,
+                "status": w.status,
+                "needsApproval": w.needs_approval,
+                "detail": w.detail,
+                "link": w.link,
+                "createdAt": w.created_at.isoformat(),
+            }
+            for w in rows
+        ]
 
 
 def _get_office(office_id: str) -> Office:

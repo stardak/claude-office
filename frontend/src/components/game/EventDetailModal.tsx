@@ -10,6 +10,11 @@ import { format } from "date-fns";
 import type { EventLogEntry } from "@/stores/gameStore";
 import { useTranslation } from "@/hooks/useTranslation";
 import { getEventTypeBadgeClasses } from "@/utils/event-type-styles";
+import { useGameStore, selectSessionId } from "@/stores/gameStore";
+import {
+  OfficeWorkPanel,
+  officeWorkKey,
+} from "@/components/attention/OfficeWorkPanel";
 
 interface EventDetailModalProps {
   event: EventLogEntry;
@@ -18,6 +23,7 @@ interface EventDetailModalProps {
 
 export function EventDetailModal({ event, onClose }: EventDetailModalProps) {
   const { t } = useTranslation();
+  const sessionId = useGameStore(selectSessionId);
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -81,6 +87,12 @@ export function EventDetailModal({ event, onClose }: EventDetailModalProps) {
             </div>
             <div className="text-slate-200 text-[12px]">{event.summary}</div>
           </div>
+
+          {/* Finished work handed in by an office agent (Onset offices) */}
+          <OfficeWorkPanel
+            sessionId={sessionId}
+            agentKey={officeWorkKey(event.agentId)}
+          />
 
           {/* Detail fields */}
           {hasDetail ? (

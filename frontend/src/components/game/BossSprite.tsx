@@ -16,6 +16,8 @@ import { ICON_MAP } from "./shared/iconMap";
 import { drawBubble, drawIconBadge } from "./shared/drawBubble";
 import { drawRightArm, drawLeftArm } from "./shared/drawArm";
 import { truncateBubbleText } from "@/utils/bubbleText";
+import { useAttentionStore } from "@/stores/attentionStore";
+import { usePreferencesStore } from "@/stores/preferencesStore";
 
 // ============================================================================
 // TYPES
@@ -207,6 +209,24 @@ function BossSpriteComponent({
   isAway = false,
   name = "onset",
 }: BossSpriteProps): ReactNode {
+  // Click the boss to see their finished work (same popup as agents).
+  const clickToFocusEnabled = usePreferencesStore(
+    (st) => st.clickToFocusEnabled,
+  );
+  const openFocusPopup = useAttentionStore((st) => st.openFocusPopup);
+  const handlePointerTap = useCallback(() => {
+    if (!clickToFocusEnabled) return;
+    const canvas = document.querySelector(".pixi-canvas-container canvas");
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scale = rect.width / 1280; // CANVAS_WIDTH = 1280
+    openFocusPopup(
+      "boss",
+      rect.left + position.x * scale,
+      rect.top + position.y * scale,
+    );
+  }, [clickToFocusEnabled, openFocusPopup, position.x, position.y]);
+
   // Animation state for typing
   const [typingTime, setTypingTime] = useState(0);
 
@@ -258,7 +278,12 @@ function BossSpriteComponent({
   const bubbleOffset = -80;
 
   return (
-    <pixiContainer x={position.x} y={position.y}>
+    <pixiContainer
+      x={position.x}
+      y={position.y}
+      onPointerTap={handlePointerTap}
+      interactive={clickToFocusEnabled}
+    >
       {/* Chair - behind everything */}
       {chairTexture ? (
         <pixiSprite

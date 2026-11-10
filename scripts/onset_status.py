@@ -44,6 +44,22 @@ if os.environ.get("CF_ACCESS_CLIENT_ID"):
     HEADERS["CF-Access-Client-Id"] = os.environ["CF_ACCESS_CLIENT_ID"]
     HEADERS["CF-Access-Client-Secret"] = os.environ.get("CF_ACCESS_CLIENT_SECRET", "")
 
+DEMO_DETAIL = {
+    ("analyst", "done", "Hook B converts best"): (
+        "Weekly funnel review (demo)\n\n"
+        "- Hook B ('No gym, no excuses') beat A and C on trial starts.\n"
+        "- Reels with a coach voiceover kept viewers longer.\n"
+        "- Suggest: Social and Ads both lead with hook B this week."
+    ),
+    ("email", "waiting", "Thu newsletter"): (
+        "Subject: Your 10-minute arms finisher\n\n"
+        "Hi {first_name},\n\n"
+        "No gym? No problem. This week's finisher takes 10 minutes and a "
+        "chair. Open Onset, tap Today, and hit start.\n\n"
+        "Stef & Hannah"
+    ),
+}
+
 DEMO = [
     ("onset", "working", "Planning this week", False, None, 4),
     ("analyst", "working", "Weekly funnel review", False, None, 5),
@@ -64,13 +80,23 @@ DEMO = [
 ]
 
 
-def send(agent: str, status: str, task: str, approval: bool = False, to: str | None = None) -> None:
+def send(
+    agent: str,
+    status: str,
+    task: str,
+    approval: bool = False,
+    to: str | None = None,
+    detail: str | None = None,
+    link: str | None = None,
+) -> None:
     body = {
         "agent": agent,
         "status": status,
         "task": task,
         "needs_approval": approval,
         "handoff_to": to,
+        "detail": detail,
+        "link": link,
     }
     req = urllib.request.Request(
         URL,
@@ -102,6 +128,8 @@ def main() -> None:
     p.add_argument("task", nargs="?", default="")
     p.add_argument("--approval", action="store_true", help="flag that this needs Stef's OK")
     p.add_argument("--to", help="hand the work to (agent id)")
+    p.add_argument("--detail", help="the finished work itself (text, or @file to read it)")
+    p.add_argument("--link", help="https link to the finished work")
     p.add_argument("--demo", action="store_true", help="play a ~60s demo")
     a = p.parse_args()
     if not KEY:
@@ -113,10 +141,14 @@ def main() -> None:
         send(OFFICE, "done", "Team briefed")
     elif a.demo:
         for agent, status, task, approval, to, wait in DEMO:
-            send(agent, status, task, approval, to)
+            send(agent, status, task, approval, to, DEMO_DETAIL.get((agent, status, task)))
             time.sleep(wait)
     elif a.agent:
-        send(a.agent, a.status, a.task, a.approval, a.to)
+        detail = a.detail
+        if detail and detail.startswith("@"):
+            with open(detail[1:], encoding="utf-8") as f:
+                detail = f.read()
+        send(a.agent, a.status, a.task, a.approval, a.to, detail, a.link)
     else:
         p.print_help()
 

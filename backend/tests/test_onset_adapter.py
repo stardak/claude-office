@@ -43,18 +43,47 @@ def test_disabled_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(
     "task",
-    [
-        "Reply to jane@example.com",
-        "Check https://example.com",
-        "Revenue £1,200",
-        "Customer 0012345",
-        "Rotate the API key",
-        "Trial to paid 12%",
-        "x" * 61,
-    ],
+    ["password: hunter2hunter2", "api_key=abc123def456", "cfast_ApGUystLw88JbQKlB3J5IX", "x" * 61],
 )
-def test_privacy_filter_rejects_sensitive_labels(task: str) -> None:
+def test_rejects_secrets_and_long_labels(task: str) -> None:
     assert post({"agent": "email", "task": task}).status_code == 422
+
+
+@pytest.mark.parametrize(
+    "task",
+    ["Reply to jane@example.com", "Revenue £1,200", "Trial to paid 12%", "Rotate the API key"],
+)
+def test_allows_content_and_figures(task: str) -> None:
+    assert post({"agent": "email", "task": task}).status_code == 200
+
+
+def test_finished_work_is_saved_and_listed() -> None:
+    body = {
+        "agent": "email",
+        "status": "waiting",
+        "task": "Thu newsletter",
+        "needs_approval": True,
+        "detail": "Subject: New 30-day arms challenge\n\nHi there...",
+        "link": "https://app.brevo.com/campaign/edit/42",
+    }
+    assert post(body).status_code == 200
+    assert post({**body, "task": "Thu newsletter v2", "detail": "v2"}).status_code == 200
+    r = client.get(f"/api/v1/office-work/{SESSION_ID}/email")
+    assert r.status_code == 200
+    items = r.json()
+    assert [i["title"] for i in items[:2]] == ["Thu newsletter v2", "Thu newsletter"]
+    assert items[1]["detail"].startswith("Subject: New 30-day")
+    assert items[1]["link"] == "https://app.brevo.com/campaign/edit/42"
+    assert items[1]["needsApproval"] is True
+    # Boss work is stored under "boss" and "main" is accepted as an alias.
+    assert post({"agent": "onset", "task": "Plan", "detail": "Week plan"}).status_code == 200
+    assert client.get(f"/api/v1/office-work/{SESSION_ID}/main").json()[0]["detail"] == "Week plan"
+
+
+def test_finished_work_rejects_secrets_and_bad_links() -> None:
+    assert post({"agent": "email", "detail": "password = hunter2hunter2"}).status_code == 422
+    assert post({"agent": "email", "link": "javascript:alert(1)"}).status_code == 422
+    assert post({"agent": "email", "link": "http://insecure.example"}).status_code == 422
 
 
 def test_seats_staff_with_exact_names_and_desks() -> None:
